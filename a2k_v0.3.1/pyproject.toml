@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ask2know"
+version = "0.3.1"
+description = "Low-sample active teaching framework prototype"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "opencv-python>=4.8.0",
+    "numpy>=1.23.0",
+    "PyYAML>=6.0"
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["ask2know*"]

@@ -1,0 +1,60 @@
+task:
+  name: fruit_demo
+  type: image_object_recognition
+  description: 内置水果演示任务
+
+paths:
+  project_root: datasets/fruit_demo_project
+  dataset_dir: datasets/fruit_demo
+  output_dir: outputs/fruit_demo
+
+classes:
+  - apple
+  - strawberry
+
+features:
+  color: true
+  size: true
+  contour: true
+  texture: true
+
+learning:
+  initial_weights:
+    color: 0.30
+    size: 0.05
+    contour: 0.35
+    texture: 0.30
+  update_step: 0.07
+  min_weight: 0.05
+  max_weight: 0.70
+
+confidence:
+  auto_accept_threshold: 0.88
+  ask_user_threshold: 0.12
+  global_uncertainty_spread: 0.08
+  global_uncertainty_top_n: 5
+  saturation_ratio_threshold: 0.65
+
+question:
+  max_questions_per_sample: 1
+  enable_question_reward: true
+
+augmentation:
+  enable: true
+  max_augmented_per_image: 4
+  brightness: true
+  rotation: true
+  scale_crop: true
+  blur: false
+
+sample_pool:
+  enable: true
+  require_confirm_before_learning: true
+  move_unlabeled_after_decision: true
+
+unlabeled_import:
+  auto_rename: true
+
+teaching:
+  allow_region_seed: false
+  max_seed_annotations_per_class: 2

@@ -1,0 +1,318 @@
+[
+  {
+    "sample": "datasets\\fruit_demo\\unlabeled\\test_001.jpg",
+    "before": [
+      {
+        "label": "apple",
+        "score": 0.9303043066409596,
+        "detail": {
+          "color": 0.6538746953010559,
+          "size": 0.9893282353878021,
+          "contour": 0.9775513112545013,
+          "texture": 0.9795250296592712
+        }
+      },
+      {
+        "label": "strawberry",
+        "score": 0.9202493766420766,
+        "detail": {
+          "color": 0.6308024078607559,
+          "size": 0.9839245080947876,
+          "contour": 0.9686127305030823,
+          "texture": 0.9710248112678528
+        }
+      }
+    ],
+    "gap_before": 0.010054929998883022,
+    "asked": true,
+    "question": "Q_COLOR_IMPORTANCE",
+    "question_text": "apple 和 strawberry 是否主要通过颜色区分？",
+    "answer": "B",
+    "answer_text": "颜色相似，不能主要靠颜色",
+    "weights_before": {
+      "color": 0.15789473684210523,
+      "size": 0.2807017543859649,
+      "contour": 0.2807017543859649,
+      "texture": 0.2807017543859649
+    },
+    "weights_after": {
+      "color": 0.0945104697226938,
+      "size": 0.30182984342576874,
+      "contour": 0.30182984342576874,
+      "texture": 0.30182984342576874
+    },
+    "after": [
+      {
+        "label": "apple",
+        "score": 0.9511108365267589,
+        "detail": {
+          "color": 0.6538746953010559,
+          "size": 0.9893282353878021,
+          "contour": 0.9775513112545013,
+          "texture": 0.9795250296592712
+        }
+      },
+      {
+        "label": "strawberry",
+        "score": 0.942035707625617,
+        "detail": {
+          "color": 0.6308024078607559,
+          "size": 0.9839245080947876,
+          "contour": 0.9686127305030823,
+          "texture": 0.9710248112678528
+        }
+      }
+    ],
+    "confirmed": "n",
+    "helpful": false,
+    "question_weights": {
+      "Q_COLOR_IMPORTANCE": 0.9,
+      "Q_SIZE_IMPORTANCE": 1.0,
+      "Q_CONTOUR_IMPORTANCE": 1.0,
+      "Q_TEXTURE_IMPORTANCE": 1.0
+    },
+    "ask_counts": {
+      "Q_COLOR_IMPORTANCE": 1,
+      "Q_SIZE_IMPORTANCE": 0,
+      "Q_CONTOUR_IMPORTANCE": 0,
+      "Q_TEXTURE_IMPORTANCE": 0
+    }
+  },
+  {
+    "sample": "datasets\\fruit_demo\\unlabeled\\test_002.jpg",
+    "before": [
+      {
+        "label": "apple",
+        "score": 0.9566237598339964,
+        "detail": {
+          "color": 0.5460621789097786,
+          "size": 0.9994029104709625,
+          "contour": 0.9991638958454132,
+          "texture": 0.9998615682125092
+        }
+      },
+      {
+        "label": "strawberry",
+        "score": 0.9548051571981218,
+        "detail": {
+          "color": 0.5250349827110767,
+          "size": 0.999352753162384,
+          "contour": 0.9997788369655609,
+          "texture": 0.9998556673526764
+        }
+      }
+    ],
+    "gap_before": 0.0018186026358746332,
+    "asked": true,
+    "question": "Q_SIZE_IMPORTANCE",
+    "question_text": "apple 和 strawberry 是否主要通过大小/体积区分？",
+    "answer": "A",
+    "answer_text": "apple 通常更大",
+    "weights_before": {
+      "color": 0.0945104697226938,
+      "size": 0.30182984342576874,
+      "contour": 0.30182984342576874,
+      "texture": 0.30182984342576874
+    },
+    "weights_after": {
+      "color": 0.08832754179691009,
+      "size": 0.347504526566139,
+      "contour": 0.28208396581847545,
+      "texture": 0.28208396581847545
+    },
+    "after": [
+      {
+        "label": "apple",
+        "score": 0.9594223958569755,
+        "detail": {
+          "color": 0.5460621789097786,
+          "size": 0.9994029104709625,
+          "contour": 0.9991638958454132,
+          "texture": 0.9998615682125092
+        }
+      },
+      {
+        "label": "strawberry",
+        "score": 0.9577194859060641,
+        "detail": {
+          "color": 0.5250349827110767,
+          "size": 0.999352753162384,
+          "contour": 0.9997788369655609,
+          "texture": 0.9998556673526764
+        }
+      }
+    ],
+    "confirmed": "y",
+    "helpful": false,
+    "question_weights": {
+      "Q_COLOR_IMPORTANCE": 0.9,
+      "Q_SIZE_IMPORTANCE": 0.9,
+      "Q_CONTOUR_IMPORTANCE": 1.0,
+      "Q_TEXTURE_IMPORTANCE": 1.0
+    },
+    "ask_counts": {
+      "Q_COLOR_IMPORTANCE": 1,
+      "Q_SIZE_IMPORTANCE": 1,
+      "Q_CONTOUR_IMPORTANCE": 0,
+      "Q_TEXTURE_IMPORTANCE": 0
+    }
+  },
+  {
+    "sample": "datasets\\fruit_demo\\unlabeled\\test_003.jpg",
+    "before": [
+      {
+        "label": "apple",
+        "score": 0.9579331916999418,
+        "detail": {
+          "color": 0.5629972070455551,
+          "size": 0.9996691048145294,
+          "contour": 0.9995993971824646,
+          "texture": 0.9885160624980927
+        }
+      },
+      {
+        "label": "strawberry",
+        "score": 0.9553124684807424,
+        "detail": {
+          "color": 0.5356662273406982,
+          "size": 0.999352753162384,
+          "contour": 0.9997788369655609,
+          "texture": 0.9879937767982483
+        }
+      }
+    ],
+    "gap_before": 0.0026207232191994834,
+    "asked": true,
+    "question": "Q_CONTOUR_IMPORTANCE",
+    "question_text": "apple 和 strawberry 是否主要通过轮廓/形状区分？",
+    "answer": "A",
+    "answer_text": "轮廓差异明显，形状很重要",
+    "weights_before": {
+      "color": 0.08832754179691009,
+      "size": 0.347504526566139,
+      "contour": 0.28208396581847545,
+      "texture": 0.28208396581847545
+    },
+    "weights_after": {
+      "color": 0.08254910448309354,
+      "size": 0.32477058557583083,
+      "contour": 0.32905043534436956,
+      "texture": 0.263629874596706
+    },
+    "after": [
+      {
+        "label": "apple",
+        "score": 0.9606590182268357,
+        "detail": {
+          "color": 0.5629972070455551,
+          "size": 0.9996691048145294,
+          "contour": 0.9995993971824646,
+          "texture": 0.9885160624980927
+        }
+      },
+      {
+        "label": "strawberry",
+        "score": 0.9582214832414314,
+        "detail": {
+          "color": 0.5356662273406982,
+          "size": 0.999352753162384,
+          "contour": 0.9997788369655609,
+          "texture": 0.9879937767982483
+        }
+      }
+    ],
+    "confirmed": "n",
+    "helpful": false,
+    "question_weights": {
+      "Q_COLOR_IMPORTANCE": 0.9,
+      "Q_SIZE_IMPORTANCE": 0.9,
+      "Q_CONTOUR_IMPORTANCE": 0.9,
+      "Q_TEXTURE_IMPORTANCE": 1.0
+    },
+    "ask_counts": {
+      "Q_COLOR_IMPORTANCE": 1,
+      "Q_SIZE_IMPORTANCE": 1,
+      "Q_CONTOUR_IMPORTANCE": 1,
+      "Q_TEXTURE_IMPORTANCE": 0
+    }
+  },
+  {
+    "sample": "datasets\\fruit_demo\\unlabeled\\test_004.jpg",
+    "before": [
+      {
+        "label": "apple",
+        "score": 0.9650619013747893,
+        "detail": {
+          "color": 0.6920981258153915,
+          "size": 0.9999780356884003,
+          "contour": 0.9825252592563629,
+          "texture": 0.9857228994369507
+        }
+      },
+      {
+        "label": "strawberry",
+        "score": 0.9586810874476623,
+        "detail": {
+          "color": 0.6271446943283081,
+          "size": 1.0,
+          "contour": 0.9803306758403778,
+          "texture": 0.9845698773860931
+        }
+      }
+    ],
+    "gap_before": 0.0063808139271269715,
+    "asked": true,
+    "question": "Q_TEXTURE_IMPORTANCE",
+    "question_text": "apple 和 strawberry 是否主要通过表面纹理区分？",
+    "answer": "A",
+    "answer_text": "纹理差异明显，纹理很重要",
+    "weights_before": {
+      "color": 0.08254910448309354,
+      "size": 0.32477058557583083,
+      "contour": 0.32905043534436956,
+      "texture": 0.263629874596706
+    },
+    "weights_after": {
+      "color": 0.0771486957785921,
+      "size": 0.303523911753113,
+      "contour": 0.30752377134987813,
+      "texture": 0.31180362111841686
+    },
+    "after": [
+      {
+        "label": "apple",
+        "score": 0.9664135554536224,
+        "detail": {
+          "color": 0.6920981258153915,
+          "size": 0.9999780356884003,
+          "contour": 0.9825252592563629,
+          "texture": 0.9857228994369507
+        }
+      },
+      {
+        "label": "strawberry",
+        "score": 0.9603747466025131,
+        "detail": {
+          "color": 0.6271446943283081,
+          "size": 1.0,
+          "contour": 0.9803306758403778,
+          "texture": 0.9845698773860931
+        }
+      }
+    ],
+    "confirmed": "y",
+    "helpful": false,
+    "question_weights": {
+      "Q_COLOR_IMPORTANCE": 0.9,
+      "Q_SIZE_IMPORTANCE": 0.9,
+      "Q_CONTOUR_IMPORTANCE": 0.9,
+      "Q_TEXTURE_IMPORTANCE": 0.9
+    },
+    "ask_counts": {
+      "Q_COLOR_IMPORTANCE": 1,
+      "Q_SIZE_IMPORTANCE": 1,
+      "Q_CONTOUR_IMPORTANCE": 1,
+      "Q_TEXTURE_IMPORTANCE": 1
+    }
+  }
+]

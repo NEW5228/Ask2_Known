@@ -1,0 +1,16 @@
+{
+  "objects": [
+    {
+      "object_id": "F001",
+      "name": "apple",
+      "display_name": "苹果",
+      "description": "通常较圆，表面较平滑，可能是红色、绿色或黄色"
+    },
+    {
+      "object_id": "F002",
+      "name": "strawberry",
+      "display_name": "草莓",
+      "description": "通常轮廓偏尖，表面纹理或颗粒感更明显"
+    }
+  ]
+}

@@ -1,0 +1,60 @@
+task:
+  name: your_task_name
+  type: image_object_recognition
+  description: 用户自定义 Ask2Know 任务
+
+paths:
+  project_root: D:/a2k_test/your_task_name
+  dataset_dir: D:/a2k_test/your_task_name/datasets
+  output_dir: D:/a2k_test/your_task_name/outputs
+
+classes:
+  - class_a
+  - class_b
+
+features:
+  color: true
+  size: true
+  contour: true
+  texture: true
+
+learning:
+  initial_weights:
+    color: 0.30
+    size: 0.05
+    contour: 0.35
+    texture: 0.30
+  update_step: 0.07
+  min_weight: 0.05
+  max_weight: 0.70
+
+confidence:
+  auto_accept_threshold: 0.88
+  ask_user_threshold: 0.12
+  global_uncertainty_spread: 0.08
+  global_uncertainty_top_n: 5
+  saturation_ratio_threshold: 0.65
+
+question:
+  max_questions_per_sample: 1
+  enable_question_reward: true
+
+augmentation:
+  enable: true
+  max_augmented_per_image: 4
+  brightness: true
+  rotation: true
+  scale_crop: true
+  blur: false
+
+sample_pool:
+  enable: true
+  require_confirm_before_learning: true
+  move_unlabeled_after_decision: true
+
+unlabeled_import:
+  auto_rename: true
+
+teaching:
+  allow_region_seed: false
+  max_seed_annotations_per_class: 2
