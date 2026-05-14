@@ -28,7 +28,6 @@ dist/
 .idea/
 .DS_Store
 Thumbs.db
-AGENTS.md
 
 # Logs and temporary files
 *.log
