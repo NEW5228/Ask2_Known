@@ -1,6 +1,6 @@
 # Ask2Know
 
-Ask2Know 是一个面向个人和小团队的低样本主动教学训练框架。它不是做大模型训练，而是用少量已知图片建立类别原型，在识别不确定时主动询问用户，并把确认、纠错和错因记录为可累积的经验。
+Ask2Know 是一个面向个人和小团队的低样本主动教学训练框架。v0.3.6 开始尝试加入基础视觉概念层，让系统在浅层特征之外初步理解“偏红、接近圆形、长条形、表面平滑、聚集感、主体清晰”等可复用概念。
 
 ## 安装
 
@@ -14,6 +14,15 @@ pip install -r requirements.txt
 
 ```bat
 python scripts\init_task.py --name fruit_test3 --classes apple banana pear grape orange --output D:\a2k_test
+```
+
+## 运行内置 demo
+
+第一次运行内置 demo 前先生成示例图片：
+
+```bat
+python scripts\create_demo_dataset.py
+python run_demo.py --config configs\fruit_demo.yaml
 ```
 
 ## 在旧项目中追加新类别
@@ -32,7 +41,7 @@ D:\a2k_test\fruit_test3\datasets\train\cherry
 
 ## 运行旧项目继续学习
 
-默认不弹窗，避免图片查看器占用文件。
+v0.3.6 默认不弹窗，避免图片查看器卡死。
 
 ```bat
 python run_demo.py --config D:\a2k_test\fruit_test3\configs\task_config.yaml
@@ -52,7 +61,7 @@ python run_demo.py --config D:\a2k_test\fruit_test3\configs\task_config.yaml --p
 
 ## 错误后追问多选
 
-如果系统把 grape 识别成 apple，用户纠正后，系统会追问为什么错，并支持多选：
+如果系统把 grape 识别成 apple，用户纠正后，系统会追问为什么错。v0.3.6 支持多选：
 
 ```text
 A. 颜色或色系差异明显
@@ -84,20 +93,37 @@ outputs/experience_summary.json
 metadata/experience_summary.json
 ```
 
-这是系统根据错误经验形成的弱总结，不是最终真理，但会帮助后续问题生成和概念层设计。
+这是系统根据错误经验和基础视觉概念形成的弱总结，不是最终真理，但会帮助后续问题生成、概念层设计和经验迁移。
+
+## 基础视觉概念层
+
+v0.3.6 默认启用轻量概念层：
+
+```yaml
+concepts:
+  enable: true
+  score_weight: 0.25
+```
+
+系统会从现有 OpenCV 特征中推导基础概念，例如颜色概念、形状概念、纹理/重复结构、主体清晰度和背景干扰。预测时会同时比较类别的特征原型和概念原型；提问时也会尝试用“我看到偏红、接近圆形、有聚集感”这类语言解释自己的观察。
 
 ## 数据增强
 
-默认启用温和增强，用于建立类别原型：亮度、轻微旋转、轻微裁剪。可以在 `task_config.yaml` 中关闭：
+v0.3.6 默认启用温和增强，用于建立类别原型：亮度、轻微旋转、轻微裁剪。可以在 `task_config.yaml` 中关闭：
 
 ```yaml
 augmentation:
   enable: false
 ```
 
-## 文档
+## 后续留痕
 
-- `docs/user_guide.md`：完整使用流程。
-- `docs/framework_design.md`：框架设计。
-- `docs/future_modules.md`：后续模块规划。
-- `CHANGELOG.md`：版本更新记录。
+`docs/future_modules.md` 中保留了后续模块规划：
+
+- crawler_external_candidates：外部候选图片采集，不直接进入 confirmed。
+- visual_concept_layer：全局视觉概念层。
+- deep_feature_adapter：CLIP / ResNet / MobileNet 等深度特征适配器。
+
+## 版本纪律
+
+v0.4.0 之前如果还有 bug，不强行进入 v0.4.0。继续用 v0.3.5.1、v0.3.6 等补丁版本修复，直到 v0.3.x 稳定。

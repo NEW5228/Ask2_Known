@@ -48,7 +48,7 @@ def main():
             'object_id': f'C{len(objects) + 1:03d}',
             'name': cls,
             'display_name': cls,
-            'description': 'added by add_class'
+            'description': 'added by add_class v0.3.6'
         })
         save_json(objects_path, objects_data)
 
@@ -72,8 +72,8 @@ def main():
         print('未找到 task_config.yaml。请先确认这是 a2k 项目目录。')
 
     meta = load_json(metadata_dir / 'project_meta.json', {})
-    meta['last_used_by'] = 'a2k_v0.3.5'
-    meta['schema_version'] = '0.3.5'
+    meta['last_used_by'] = 'a2k_v0.3.6'
+    meta['schema_version'] = '0.3.6'
     meta['classes'] = sorted(set((meta.get('classes') or []) + [cls]))
     save_json(metadata_dir / 'project_meta.json', meta)
 

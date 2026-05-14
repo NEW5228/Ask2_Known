@@ -24,6 +24,17 @@ REASON_TO_FEATURES = {
     'other': [],
 }
 
+REASON_TO_CONCEPTS = {
+    'color': ['color_family'],
+    'shape': ['round', 'elongated', 'pear_like', 'rectangular_like'],
+    'texture': ['smooth_surface', 'texture_rich', 'edge_rich'],
+    'cluster': ['single_object', 'cluster_like', 'repeated_parts'],
+    'background': ['background_interference', 'clear_foreground'],
+    'quality': ['clear_foreground', 'background_interference'],
+    'size': [],
+    'other': [],
+}
+
 # These are optional task hints. They are examples, not hard-coded final truth.
 FRUIT_PAIR_HINTS = {
     frozenset(['apple', 'grape']): {
@@ -90,7 +101,7 @@ def pair_key(a, b):
 
 
 class PairwiseExperienceManager:
-    def __init__(self, metadata_dir=None, path=None, version='0.3.5'):
+    def __init__(self, metadata_dir=None, path=None, version='0.3.6'):
         self.version = version
         if path is not None:
             self.path = Path(path)
@@ -125,6 +136,8 @@ class PairwiseExperienceManager:
             'reason_counts': {},
             'useful_features': {},
             'weak_features': {},
+            'useful_concepts': {},
+            'weak_concepts': {},
             'question_counts': {},
             'question_helpful': {},
             'notes': [],
@@ -164,16 +177,22 @@ class PairwiseExperienceManager:
         pair['correction_count'] = int(pair.get('correction_count', 0)) + 1
         now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         saved_reasons = []
+        pair.setdefault('useful_concepts', {})
+        pair.setdefault('weak_concepts', {})
         for reason_id, reason_text in reason_items:
             pair['reason_counts'][reason_id] = int(pair['reason_counts'].get(reason_id, 0)) + 1
             features = REASON_TO_FEATURES.get(reason_id, [])
+            concepts = REASON_TO_CONCEPTS.get(reason_id, [])
             if reason_id in ('background', 'quality', 'other'):
-                pass
+                for concept in concepts:
+                    pair['weak_concepts'][concept] = int(pair['weak_concepts'].get(concept, 0)) + 1
             elif reason_id == 'size':
                 pair['weak_features']['size'] = int(pair['weak_features'].get('size', 0)) + 1
             else:
                 for feature in features:
                     pair['useful_features'][feature] = int(pair['useful_features'].get(feature, 0)) + 1
+                for concept in concepts:
+                    pair['useful_concepts'][concept] = int(pair['useful_concepts'].get(concept, 0)) + 1
             saved_reasons.append({'reason_id': reason_id, 'reason_text': reason_text})
         note = {
             'time': now,

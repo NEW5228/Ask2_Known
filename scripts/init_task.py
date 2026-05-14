@@ -29,13 +29,20 @@ features:
   size: true
   contour: true
   texture: true
+  quality: true
+
+concepts:
+  enable: true
+  score_weight: 0.25
 
 learning:
   initial_weights:
-    color: 0.30
+    color: 0.28
     size: 0.05
-    contour: 0.35
-    texture: 0.30
+    contour: 0.32
+    texture: 0.25
+    quality: 0.10
+  default_feature_weight: 0.08
   update_step: 0.07
   min_weight: 0.05
   max_weight: 0.70
@@ -126,12 +133,12 @@ def main():
     write_json(dataset_dir / 'concepts.json', {'concepts': []})
     write_json(project_root / 'metadata' / 'project_meta.json', {
         'project_name': task_name,
-        'created_by': 'a2k_v0.3.5',
-        'schema_version': '0.3.5',
+        'created_by': 'a2k_v0.3.6',
+        'schema_version': '0.3.6',
         'classes': args.classes
     })
     write_json(project_root / 'metadata' / 'dataset_index.json', {
-        'schema_version': '0.3.5',
+        'schema_version': '0.3.6',
         'classes': {cls: {'next_id': 1, 'count': 0} for cls in args.classes}
     })
     write_yaml_like(
@@ -144,7 +151,7 @@ def main():
     )
 
     readme = project_root / 'README_task.md'
-    readme.write_text(f'''# {task_name}\n\n这个任务由 Ask2Know 自动创建。\n\n## 放图片\n\n已知样本放入：\n\n```text\n{dataset_dir / 'train'}\n```\n\n未知样本放入：\n\n```text\n{dataset_dir / 'unlabeled'}\n```\n\n## 运行\n\n在 Ask2Know 框架目录执行：\n\n```bat\npython run_demo.py --config {config_path}\n```\n\n默认不弹图，避免 Windows 图片查看器占用文件。需要预览时：\n\n```bat\npython run_demo.py --config {config_path} --preview\n```\n''', encoding='utf-8')
+    readme.write_text(f'''# {task_name}\n\n这个任务由 Ask2Know v0.3.6 自动创建。\n\n## 放图片\n\n已知样本放入：\n\n```text\n{dataset_dir / 'train'}\n```\n\n未知样本放入：\n\n```text\n{dataset_dir / 'unlabeled'}\n```\n\n## 运行\n\n在 Ask2Know 框架目录执行：\n\n```bat\npython run_demo.py --config {config_path}\n```\n\nv0.3.6 默认不弹图，避免 Windows 图片查看器占用文件。需要预览时：\n\n```bat\npython run_demo.py --config {config_path} --preview\n```\n''', encoding='utf-8')
 
     print('Ask2Know task created.')
     print('Project:', project_root)

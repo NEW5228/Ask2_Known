@@ -48,7 +48,7 @@ QUESTION_BANK = [
     },
     {
         'id': 'Q_SAMPLE_QUALITY',
-        'feature': 'texture',
+        'feature': 'quality',
         'kind': 'sample_quality',
         'template': '这张图片是否适合作为学习样本？',
         'options': [

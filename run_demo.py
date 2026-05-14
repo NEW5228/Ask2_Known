@@ -15,7 +15,7 @@ from ask2know.learning.feedback_updater import apply_answer_to_weights, update_q
 from ask2know.sample_pool.manager import SamplePoolManager
 from ask2know.experience.pairwise import PairwiseExperienceManager
 
-VERSION = '0.3.5'
+VERSION = '0.3.6'
 
 
 def open_image_file(image_path):
@@ -54,6 +54,18 @@ def class_names(objects):
 
 def save_objects_file(dataset_dir, objects):
     save_json(Path(dataset_dir) / 'objects.json', {'objects': objects})
+
+
+def build_initial_weights(cfg, feature_names):
+    learning = cfg.get('learning', {})
+    configured = dict(learning.get('initial_weights', {}))
+    default_weight = float(learning.get('default_feature_weight', 0.08))
+    if not feature_names:
+        return configured
+    weights = {}
+    for name in feature_names:
+        weights[name] = float(configured.get(name, default_weight))
+    return weights
 
 
 def ask_true_label(objects, allow_new=True, allow_reject=True):
@@ -119,38 +131,53 @@ def add_new_object_if_needed(objects, label):
         'object_id': f'C{len(objects) + 1:03d}',
         'name': label,
         'display_name': label,
-        'description': 'added during interactive learning'
+        'description': f'added during v{VERSION} interactive learning'
     })
     return objects
 
 
-def handle_sample_decision(decision, label, sample_path, model, pool, objects, dataset_dir):
+def handle_sample_decision(decision, label, sample_path, model, pool, objects, dataset_dir, pool_enabled=True, move_after_decision=True):
     if decision in ('confirmed', 'class', 'new') and label:
         objects = add_new_object_if_needed(objects, label)
         save_objects_file(dataset_dir, objects)
+        pool.ensure_for_classes(class_names(objects))
+        pool.update_project_meta(classes=class_names(objects))
+        if not pool_enabled or not move_after_decision:
+            model.add_confirmed_sample(label, sample_path)
+            print('已在本轮运行中学习该 confirmed 样本，但按配置不移动文件到长期训练库。')
+            return {'decision': 'confirmed', 'label': label, 'saved_to': None, 'persisted': False}
         saved_path = pool.add_confirmed(sample_path, label)
         model.add_confirmed_sample(label, saved_path)
         print('已加入长期训练库 confirmed/train:', label)
         print('保存为:', saved_path)
-        return {'decision': 'confirmed', 'label': label, 'saved_to': saved_path}
+        return {'decision': 'confirmed', 'label': label, 'saved_to': saved_path, 'persisted': True}
 
     if decision == 'candidate' and label:
+        if not pool_enabled or not move_after_decision:
+            print('已记录为 candidate，但按配置不移动文件。')
+            return {'decision': 'candidate', 'label': label, 'saved_to': None, 'persisted': False}
         saved_path = pool.add_candidate(sample_path, label)
         print('已加入 candidate，不进入正式学习:', label)
         print('保存为:', saved_path)
-        return {'decision': 'candidate', 'label': label, 'saved_to': saved_path}
+        return {'decision': 'candidate', 'label': label, 'saved_to': saved_path, 'persisted': True}
 
     if decision == 'reject':
+        if not pool_enabled or not move_after_decision:
+            print('已记录为 rejected，但按配置不移动文件。')
+            return {'decision': 'rejected', 'label': None, 'saved_to': None, 'persisted': False}
         saved_path = pool.add_rejected(sample_path, 'rejected')
         print('已加入 rejected。')
         print('保存为:', saved_path)
-        return {'decision': 'rejected', 'label': None, 'saved_to': saved_path}
+        return {'decision': 'rejected', 'label': None, 'saved_to': saved_path, 'persisted': True}
 
     if decision == 'unknown':
+        if not pool_enabled or not move_after_decision:
+            print('已记录为 unknown，但按配置不移动文件。')
+            return {'decision': 'unknown', 'label': None, 'saved_to': None, 'persisted': False}
         saved_path = pool.add_unknown(sample_path)
         print('已加入 unknown。')
         print('保存为:', saved_path)
-        return {'decision': 'unknown', 'label': None, 'saved_to': saved_path}
+        return {'decision': 'unknown', 'label': None, 'saved_to': saved_path, 'persisted': True}
 
     print('已跳过，文件仍保留在 unlabeled。')
     return {'decision': 'skip', 'label': None, 'saved_to': None}
@@ -176,7 +203,7 @@ def _parse_multi_choice(text, valid_keys):
 def ask_correction_reason(predicted_label, true_label, pairwise_manager, adaptive_weights, sample_path=None):
     """Ask why a wrong prediction happened and store pairwise experience.
 
-    Supports multi-select answers because real differences often involve
+    v0.3.6 supports multi-select answers because real differences often involve
     color + shape + texture together.
     """
     if not predicted_label or not true_label or predicted_label == true_label:
@@ -238,7 +265,7 @@ def make_experience_report(cfg, logs, final_weights, question_state, objects, pa
             'rejected_count': sum(1 for x in logs if x.get('pool', {}).get('decision') == 'rejected'),
             'skipped_count': sum(1 for x in logs if x.get('pool', {}).get('decision') == 'skip'),
         },
-        'final_feature_weights': final_weights,
+            'final_feature_weights': final_weights,
         'question_state': question_state,
         'pairwise_state': pairwise_state or {},
         'learned_notes': [],
@@ -269,7 +296,8 @@ def make_experience_report(cfg, logs, final_weights, question_state, objects, pa
                 'question': item.get('question'),
                 'answer_text': item.get('answer_text'),
                 'helpful': item.get('helpful'),
-                'weights_after': item.get('weights_after')
+                'weights_after': item.get('weights_after'),
+                'concept_evidence': item.get('generated_question', {}).get('concept_evidence', '')
             })
 
     low_weight = [k for k, v in final_weights.items() if v < 0.12]
@@ -300,23 +328,35 @@ def make_experience_summary(pairwise_state, objects):
         'schema_version': VERSION,
         'summary_type': 'weak_experience_summary',
         'notice': '这是系统基于纠错记录自动生成的弱总结，不代表最终真理。',
-        'classes': {name: {'known_confusions': [], 'possible_useful_features': {}} for name in labels},
+        'classes': {
+            name: {
+                'known_confusions': [],
+                'possible_useful_features': {},
+                'possible_useful_concepts': {},
+            }
+            for name in labels
+        },
         'pairs': {}
     }
     pairs = (pairwise_state or {}).get('pairs', {})
     for key, pair in pairs.items():
         classes = pair.get('classes', [])
         useful = pair.get('useful_features', {})
+        useful_concepts = pair.get('useful_concepts', {})
         reasons = pair.get('reason_counts', {})
         item = {
             'classes': classes,
             'confused_count': pair.get('confused_count', 0),
             'correction_count': pair.get('correction_count', 0),
             'useful_features': useful,
+            'useful_concepts': pair.get('useful_concepts', {}),
             'reason_counts': reasons,
             'short_text': ''
         }
-        if useful:
+        if useful_concepts:
+            ranked = sorted(useful_concepts.items(), key=lambda x: x[1], reverse=True)
+            item['short_text'] = '、'.join([x[0] for x in ranked[:4]]) + ' 可能是这组类别的重要基础视觉概念。'
+        elif useful:
             ranked = sorted(useful.items(), key=lambda x: x[1], reverse=True)
             item['short_text'] = '、'.join([x[0] for x in ranked[:3]]) + ' 可能是这组类别的重要区分点。'
         else:
@@ -324,18 +364,25 @@ def make_experience_summary(pairwise_state, objects):
         summary['pairs'][key] = item
         for cls in classes:
             if cls not in summary['classes']:
-                summary['classes'][cls] = {'known_confusions': [], 'possible_useful_features': {}}
+                summary['classes'][cls] = {
+                    'known_confusions': [],
+                    'possible_useful_features': {},
+                    'possible_useful_concepts': {},
+                }
             summary['classes'][cls]['known_confusions'].append(key)
             for feat, count in useful.items():
                 cur = summary['classes'][cls]['possible_useful_features'].get(feat, 0)
                 summary['classes'][cls]['possible_useful_features'][feat] = cur + int(count)
+            for concept, count in useful_concepts.items():
+                cur = summary['classes'][cls]['possible_useful_concepts'].get(concept, 0)
+                summary['classes'][cls]['possible_useful_concepts'][concept] = cur + int(count)
     return summary
 
 def main():
     parser = argparse.ArgumentParser(description='Ask2Know low-sample active teaching demo')
     parser.add_argument('--config', default='configs/fruit_demo.yaml')
     parser.add_argument('--preview', action='store_true', help='手动开启图片预览。默认关闭，避免 Windows 图片查看器占用文件导致卡死')
-    parser.add_argument('--no-preview', action='store_true', help='兼容旧参数；默认就是不预览')
+    parser.add_argument('--no-preview', action='store_true', help='兼容旧参数；v0.3.6 默认就是不预览')
     args = parser.parse_args()
 
     cfg = load_yaml(args.config)
@@ -396,18 +443,31 @@ def main():
     print(f'训练样本数: {len(train_samples)}，待识别样本数: {len(unlabeled)}')
     print('启用特征:', ', '.join(feature_names))
 
+    initial_weights = build_initial_weights(cfg, feature_names)
     aw = AdaptiveWeights(
-        cfg['learning']['initial_weights'],
+        initial_weights,
         cfg['learning'].get('update_step', 0.07),
         cfg['learning'].get('min_weight', 0.05),
         cfg['learning'].get('max_weight', 0.70)
     )
     aw.apply_concepts(concepts)
 
-    model = PrototypeModel(feature_names, augmentation_config=cfg.get('augmentation', {})).fit(train_samples)
+    model = PrototypeModel(
+        feature_names,
+        augmentation_config=cfg.get('augmentation', {}),
+        concept_config=cfg.get('concepts', {'enable': True, 'score_weight': 0.25})
+    ).fit(train_samples)
     q_selector = QuestionSelector(pairwise_manager=pairwise)
     logs = []
-    ask_threshold = cfg['confidence'].get('ask_user_threshold', 0.12)
+    confidence_cfg = cfg.get('confidence', {})
+    question_cfg = cfg.get('question', {})
+    sample_pool_cfg = cfg.get('sample_pool', {})
+    ask_threshold = confidence_cfg.get('ask_user_threshold', 0.12)
+    auto_accept_threshold = confidence_cfg.get('auto_accept_threshold', 0.88)
+    enable_question_reward = question_cfg.get('enable_question_reward', True)
+    require_confirm = sample_pool_cfg.get('require_confirm_before_learning', True)
+    pool_enabled = sample_pool_cfg.get('enable', True)
+    move_after_decision = sample_pool_cfg.get('move_unlabeled_after_decision', True)
 
     for idx, sample in enumerate(unlabeled, 1):
         sample_path = sample['path']
@@ -438,7 +498,7 @@ def main():
             print('原因:', reason)
             print('现在不继续问 top1/top2 的差异问题，先请你确认真实类别，避免把错误问题建立在错误候选上。')
             mode, label = ask_true_label(objects, allow_new=True, allow_reject=True)
-            pool_info = handle_sample_decision(mode, label, sample_path, model, pool, objects, dataset_dir)
+            pool_info = handle_sample_decision(mode, label, sample_path, model, pool, objects, dataset_dir, pool_enabled, move_after_decision)
             logs.append({
                 'sample': sample_path,
                 'before': results,
@@ -453,11 +513,16 @@ def main():
         if gap > ask_threshold:
             print('\n候选差距较大，系统暂不主动提问。')
             predicted_label = results[0]['label']
-            decision, label = confirm_prediction(predicted_label, objects)
-            pool_info = handle_sample_decision(decision, label, sample_path, model, pool, objects, dataset_dir)
+            if not require_confirm and results[0]['score'] >= auto_accept_threshold:
+                print(f'已达到自动确认阈值 {auto_accept_threshold:.2f}，按配置自动加入 confirmed。')
+                decision, label = 'confirmed', predicted_label
+            else:
+                decision, label = confirm_prediction(predicted_label, objects)
+            pool_info = handle_sample_decision(decision, label, sample_path, model, pool, objects, dataset_dir, pool_enabled, move_after_decision)
             correction_info = None
             if decision in ('class', 'new') and label and label != predicted_label:
-                correction_info = ask_correction_reason(predicted_label, label, pairwise, aw, sample_path=sample_path)
+                correction_sample_path = pool_info.get('saved_to') or sample_path
+                correction_info = ask_correction_reason(predicted_label, label, pairwise, aw, sample_path=correction_sample_path)
             logs.append({
                 'sample': sample_path,
                 'before': results,
@@ -470,11 +535,13 @@ def main():
             continue
 
         print('\n候选差距较小，系统不确定，进入主动询问。')
-        q = q_selector.select(results[0], results[1])
+        q = q_selector.select(results[0], results[1], weights=aw.export())
         generated = generate_natural_question(results[0], results[1], q, aw.export(), sample_path, pairwise_manager=pairwise)
 
         print('\n系统分析:')
         print(generated['evidence'])
+        if generated.get('concept_evidence'):
+            print(generated['concept_evidence'])
         print('\n问题:')
         print(generated['question'])
         for key, opt_text, _ in q['options']:
@@ -500,19 +567,26 @@ def main():
 
         predicted_label = new_results[0]['label']
         decision, label = confirm_prediction(predicted_label, objects)
-        pool_info = handle_sample_decision(decision, label, sample_path, model, pool, objects, dataset_dir)
+        pool_info = handle_sample_decision(decision, label, sample_path, model, pool, objects, dataset_dir, pool_enabled, move_after_decision)
         correction_info = None
         if decision in ('class', 'new') and label and label != predicted_label:
-            correction_info = ask_correction_reason(predicted_label, label, pairwise, aw, sample_path=sample_path)
+            correction_sample_path = pool_info.get('saved_to') or sample_path
+            correction_info = ask_correction_reason(predicted_label, label, pairwise, aw, sample_path=correction_sample_path)
         helpful = False
         if pool_info.get('decision') == 'confirmed':
             old_gap = results[0]['score'] - results[1]['score']
             new_gap = new_results[0]['score'] - new_results[1]['score']
             helpful = new_gap >= old_gap and pool_info.get('label') == predicted_label
 
-        old_qw, new_qw = update_question_reward(q_selector.question_weights, q['id'], helpful)
+        if enable_question_reward:
+            old_qw, new_qw = update_question_reward(q_selector.question_weights, q['id'], helpful)
+        else:
+            old_qw = new_qw = q_selector.question_weights.get(q['id'], 1.0)
         pairwise.record_question_result(results[0]['label'], results[1]['label'], q['id'], helpful)
-        print(f'\n问题权重更新: {q["id"]}: {old_qw:.2f} -> {new_qw:.2f}')
+        if enable_question_reward:
+            print(f'\n问题权重更新: {q["id"]}: {old_qw:.2f} -> {new_qw:.2f}')
+        else:
+            print(f'\n问题权重保持不变: {q["id"]}: {old_qw:.2f}')
 
         logs.append({
             'sample': sample_path,
