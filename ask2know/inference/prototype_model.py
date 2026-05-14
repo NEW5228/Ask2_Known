@@ -62,8 +62,10 @@ def _augmented_images(path, config):
 
 
 class PrototypeModel:
-    def __init__(self, feature_names, augmentation_config=None, concept_config=None):
+    def __init__(self, feature_names, augmentation_config=None, concept_config=None, system_feature_names=None, feature_groups=None):
         self.feature_names = feature_names
+        self.system_feature_names = list(system_feature_names or [])
+        self.feature_groups = feature_groups or {}
         self.augmentation_config = augmentation_config or {'enable': False}
         self.concept_config = concept_config or {'enable': True, 'score_weight': 0.25}
         self.concepts_enabled = self.concept_config.get('enable', True)
@@ -95,8 +97,9 @@ class PrototypeModel:
             self.samples.setdefault(label, [])
             self.samples[label].append(sample['path'])
             for feats in feats_list:
-                grouped.setdefault(label, {name: [] for name in self.feature_names if name in feats})
-                for name in self.feature_names:
+                all_feature_names = list(self.feature_names) + list(self.system_feature_names)
+                grouped.setdefault(label, {name: [] for name in all_feature_names if name in feats})
+                for name in all_feature_names:
                     if name in feats:
                         grouped[label].setdefault(name, []).append(feats[name])
                 if self.concepts_enabled:
@@ -108,7 +111,7 @@ class PrototypeModel:
         for label, fdict in grouped.items():
             self.prototypes[label] = {}
             self.feature_counts[label] = {}
-            for name in self.feature_names:
+            for name in list(self.feature_names) + list(self.system_feature_names):
                 if name in fdict:
                     self.prototypes[label][name] = _mean_vectors(fdict[name])
                     self.feature_counts[label][name] = len(fdict[name])
@@ -127,10 +130,11 @@ class PrototypeModel:
         self.feature_counts.setdefault(label, {})
         self.concept_prototypes.setdefault(label, {})
         self.concept_counts.setdefault(label, {})
-        new_vectors = {name: [] for name in self.feature_names}
+        all_feature_names = list(self.feature_names) + list(self.system_feature_names)
+        new_vectors = {name: [] for name in all_feature_names}
         new_concepts = {}
         for feats in feats_list:
-            for name in self.feature_names:
+            for name in all_feature_names:
                 if name in feats:
                     new_vectors.setdefault(name, []).append(feats[name])
             if self.concepts_enabled:
@@ -174,7 +178,23 @@ class PrototypeModel:
             return _vector_similarity(a, b, scale=4.5)
         if name == 'size':
             return _vector_similarity(a, b, scale=2.2)
+        if name == 'fruit_color':
+            return _vector_similarity(a, b, scale=4.0)
+        if name == 'fruit_shape':
+            return _vector_similarity(a, b, scale=5.0)
+        if name == 'fruit_texture':
+            return _vector_similarity(a, b, scale=4.8)
+        if name == 'fruit_structure':
+            return _vector_similarity(a, b, scale=5.2)
         return _vector_similarity(a, b, scale=2.5)
+
+    def _group_detail(self, detail):
+        out = {}
+        for group, names in self.feature_groups.items():
+            vals = [float(detail[name]) for name in names if name in detail]
+            if vals:
+                out[group] = float(np.mean(vals))
+        return out
 
     def predict(self, image_path, weights):
         feats = extract_features(image_path)
@@ -191,6 +211,10 @@ class PrototypeModel:
                 detail[name] = sim
                 score += float(w) * sim
                 total_w += float(w)
+            system_detail = {}
+            for name in self.system_feature_names:
+                if name in proto and name in feats:
+                    system_detail[name] = self._feature_similarity(name, feats[name], proto[name])
             feature_score = score / max(total_w, 1e-8)
             final = feature_score
             concept_score = None
@@ -206,6 +230,8 @@ class PrototypeModel:
                 'feature_score': feature_score,
                 'concept_score': concept_score,
                 'detail': detail,
+                'group_detail': self._group_detail(detail),
+                'system_detail': system_detail,
                 'concepts': sample_concepts,
                 'class_concepts': concept_proto,
             })
@@ -223,4 +249,6 @@ class PrototypeModel:
                 'enable': self.concepts_enabled,
                 'score_weight': self.concept_score_weight,
             },
+            'feature_groups': self.feature_groups,
+            'system_features': self.system_feature_names,
         }

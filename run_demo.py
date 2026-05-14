@@ -14,8 +14,14 @@ from ask2know.learning.weights import AdaptiveWeights
 from ask2know.learning.feedback_updater import apply_answer_to_weights, update_question_reward
 from ask2know.sample_pool.manager import SamplePoolManager
 from ask2know.experience.pairwise import PairwiseExperienceManager
+from ask2know.features.feature_config import (
+    expand_feature_adjustments,
+    initial_feature_weights,
+    parse_feature_config,
+    summarize_group_weights,
+)
 
-VERSION = '0.3.6'
+VERSION = '0.3.7'
 
 
 def open_image_file(image_path):
@@ -34,7 +40,8 @@ def open_image_file(image_path):
 
 def display_results(results, max_items=5):
     for i, r in enumerate(results[:max_items], 1):
-        detail = ', '.join(f'{k}:{v:.2f}' for k, v in r['detail'].items())
+        visible_detail = r.get('group_detail') or r.get('detail', {})
+        detail = ', '.join(f'{k}:{v:.2f}' for k, v in visible_detail.items())
         print(f'{i}. {r["label"]}: {r["score"]:.3f}  ({detail})')
 
 
@@ -56,16 +63,27 @@ def save_objects_file(dataset_dir, objects):
     save_json(Path(dataset_dir) / 'objects.json', {'objects': objects})
 
 
-def build_initial_weights(cfg, feature_names):
-    learning = cfg.get('learning', {})
-    configured = dict(learning.get('initial_weights', {}))
-    default_weight = float(learning.get('default_feature_weight', 0.08))
-    if not feature_names:
-        return configured
-    weights = {}
-    for name in feature_names:
-        weights[name] = float(configured.get(name, default_weight))
-    return weights
+def pretty_group_weights(weights, feature_spec):
+    return pretty_weights(summarize_group_weights(weights, feature_spec))
+
+
+def expand_concept_feature_hints(concepts, feature_spec):
+    expanded = []
+    for item in concepts or []:
+        copied = dict(item)
+        copied['important_features'] = expand_feature_adjustments(item.get('important_features', []), feature_spec)
+        copied['weak_features'] = expand_feature_adjustments(item.get('weak_features', []), feature_spec)
+        expanded.append(copied)
+    return expanded
+
+
+def correction_option_enabled(reason_id, feature_spec):
+    enabled = set(feature_spec.get('display_features', []))
+    if reason_id in ('background', 'other', 'quality'):
+        return True
+    if reason_id == 'cluster':
+        return bool(enabled & {'shape', 'texture'})
+    return reason_id in enabled
 
 
 def ask_true_label(objects, allow_new=True, allow_reject=True):
@@ -200,10 +218,10 @@ def _parse_multi_choice(text, valid_keys):
     return out
 
 
-def ask_correction_reason(predicted_label, true_label, pairwise_manager, adaptive_weights, sample_path=None):
+def ask_correction_reason(predicted_label, true_label, pairwise_manager, adaptive_weights, feature_spec, sample_path=None):
     """Ask why a wrong prediction happened and store pairwise experience.
 
-    v0.3.6 supports multi-select answers because real differences often involve
+    v0.3.7 supports multi-select answers because real differences often involve
     color + shape + texture together.
     """
     if not predicted_label or not true_label or predicted_label == true_label:
@@ -212,7 +230,10 @@ def ask_correction_reason(predicted_label, true_label, pairwise_manager, adaptiv
     print('\n错误后追问：')
     print(generate_question_context({'label': predicted_label}, {'label': true_label}, sample_path=sample_path, true_label=true_label, phase='post_error'))
     print('\n系统刚才识别错了。为了避免下次再犯同类错误，请选择主要原因，可以多选。')
-    options = pairwise_manager.correction_options(predicted_label, true_label)
+    options = [
+        item for item in pairwise_manager.correction_options(predicted_label, true_label)
+        if correction_option_enabled(item[1], feature_spec)
+    ]
     option_map = {}
     for key, reason_id, text, action in options:
         option_map[key.upper()] = (reason_id, text, action)
@@ -231,13 +252,16 @@ def ask_correction_reason(predicted_label, true_label, pairwise_manager, adaptiv
         inc.extend(action.get('increase', []))
         dec.extend(action.get('decrease', []))
 
-    before, after = adaptive_weights.update(inc, dec)
+    before, after = adaptive_weights.update(
+        expand_feature_adjustments(inc, feature_spec),
+        expand_feature_adjustments(dec, feature_spec),
+    )
     pair = pairwise_manager.record_corrections(predicted_label, true_label, selected_items)
 
     print('已记录类别对经验:', f'{predicted_label} vs {true_label}')
     print('错因:', '；'.join([x[1] for x in selected_items]))
-    print('权重更新前:', pretty_weights(before))
-    print('权重更新后:', pretty_weights(after))
+    print('权重更新前:', pretty_group_weights(before, feature_spec))
+    print('权重更新后:', pretty_group_weights(after, feature_spec))
 
     return {
         'predicted': predicted_label,
@@ -249,7 +273,7 @@ def ask_correction_reason(predicted_label, true_label, pairwise_manager, adaptiv
     }
 
 
-def make_experience_report(cfg, logs, final_weights, question_state, objects, pairwise_state=None):
+def make_experience_report(cfg, logs, final_weights, question_state, objects, feature_spec, pairwise_state=None):
     task = cfg.get('task', {})
     report = {
         'framework': 'Ask2Know',
@@ -265,7 +289,8 @@ def make_experience_report(cfg, logs, final_weights, question_state, objects, pa
             'rejected_count': sum(1 for x in logs if x.get('pool', {}).get('decision') == 'rejected'),
             'skipped_count': sum(1 for x in logs if x.get('pool', {}).get('decision') == 'skip'),
         },
-            'final_feature_weights': final_weights,
+        'final_feature_weights': summarize_group_weights(final_weights, feature_spec),
+        'internal_feature_weights': final_weights,
         'question_state': question_state,
         'pairwise_state': pairwise_state or {},
         'learned_notes': [],
@@ -300,8 +325,9 @@ def make_experience_report(cfg, logs, final_weights, question_state, objects, pa
                 'concept_evidence': item.get('generated_question', {}).get('concept_evidence', '')
             })
 
-    low_weight = [k for k, v in final_weights.items() if v < 0.12]
-    high_weight = [k for k, v in final_weights.items() if v > 0.30]
+    visible_weights = summarize_group_weights(final_weights, feature_spec)
+    low_weight = [k for k, v in visible_weights.items() if v < 0.12]
+    high_weight = [k for k, v in visible_weights.items() if v > 0.30]
     if low_weight:
         report['next_suggestions'].append(f'这些特征当前权重较低：{", ".join(low_weight)}。后续可检查它们是否在当前任务中不可靠。')
     if high_weight:
@@ -382,7 +408,7 @@ def main():
     parser = argparse.ArgumentParser(description='Ask2Know low-sample active teaching demo')
     parser.add_argument('--config', default='configs/fruit_demo.yaml')
     parser.add_argument('--preview', action='store_true', help='手动开启图片预览。默认关闭，避免 Windows 图片查看器占用文件导致卡死')
-    parser.add_argument('--no-preview', action='store_true', help='兼容旧参数；v0.3.6 默认就是不预览')
+    parser.add_argument('--no-preview', action='store_true', help='兼容旧参数；v0.3.7 默认就是不预览')
     args = parser.parse_args()
 
     cfg = load_yaml(args.config)
@@ -393,10 +419,13 @@ def main():
     ensure_dir(output_dir)
     ensure_dir(output_dir / 'logs')
 
-    feature_names = [k for k, enabled in cfg.get('features', {}).items() if enabled]
     loader = DatasetLoader(dataset_dir)
     objects = loader.load_objects()
     concepts = loader.load_concepts()
+    feature_spec = parse_feature_config(cfg, classes=class_names(objects) or cfg.get('classes', []))
+    feature_names = feature_spec['scoring_features']
+    display_features = feature_spec['display_features']
+    system_feature_names = feature_spec['system_features']
 
     pool = SamplePoolManager(project_root=project_root, output_dir=output_dir, dataset_dir=dataset_dir, version=VERSION)
     pairwise = PairwiseExperienceManager(metadata_dir=pool.metadata_dir, version=VERSION)
@@ -441,23 +470,27 @@ def main():
         print('项目目录:', project_root)
     print('对象类别:', ', '.join(class_names(objects)))
     print(f'训练样本数: {len(train_samples)}，待识别样本数: {len(unlabeled)}')
-    print('启用特征:', ', '.join(feature_names))
+    print('启用特征:', ', '.join(display_features))
+    if system_feature_names:
+        print('系统质量检查:', ', '.join(system_feature_names))
 
-    initial_weights = build_initial_weights(cfg, feature_names)
+    initial_weights = initial_feature_weights(cfg, feature_spec)
     aw = AdaptiveWeights(
         initial_weights,
         cfg['learning'].get('update_step', 0.07),
         cfg['learning'].get('min_weight', 0.05),
         cfg['learning'].get('max_weight', 0.70)
     )
-    aw.apply_concepts(concepts)
+    aw.apply_concepts(expand_concept_feature_hints(concepts, feature_spec))
 
     model = PrototypeModel(
         feature_names,
         augmentation_config=cfg.get('augmentation', {}),
-        concept_config=cfg.get('concepts', {'enable': True, 'score_weight': 0.25})
+        concept_config=cfg.get('concepts', {'enable': True, 'score_weight': 0.25}),
+        system_feature_names=system_feature_names,
+        feature_groups=feature_spec['group_features'],
     ).fit(train_samples)
-    q_selector = QuestionSelector(pairwise_manager=pairwise)
+    q_selector = QuestionSelector(pairwise_manager=pairwise, enabled_features=display_features)
     logs = []
     confidence_cfg = cfg.get('confidence', {})
     question_cfg = cfg.get('question', {})
@@ -477,7 +510,7 @@ def main():
         if args.preview and not args.no_preview:
             open_image_file(sample_path)
 
-        print('\n当前特征权重:', pretty_weights(aw.export()))
+        print('\n当前特征权重:', pretty_group_weights(aw.export(), feature_spec))
         print('\n初始识别结果:')
         results = model.predict(sample_path, aw.export())
         display_results(results)
@@ -522,7 +555,7 @@ def main():
             correction_info = None
             if decision in ('class', 'new') and label and label != predicted_label:
                 correction_sample_path = pool_info.get('saved_to') or sample_path
-                correction_info = ask_correction_reason(predicted_label, label, pairwise, aw, sample_path=correction_sample_path)
+                correction_info = ask_correction_reason(predicted_label, label, pairwise, aw, feature_spec, sample_path=correction_sample_path)
             logs.append({
                 'sample': sample_path,
                 'before': results,
@@ -535,8 +568,8 @@ def main():
             continue
 
         print('\n候选差距较小，系统不确定，进入主动询问。')
-        q = q_selector.select(results[0], results[1], weights=aw.export())
-        generated = generate_natural_question(results[0], results[1], q, aw.export(), sample_path, pairwise_manager=pairwise)
+        q = q_selector.select(results[0], results[1], weights=summarize_group_weights(aw.export(), feature_spec))
+        generated = generate_natural_question(results[0], results[1], q, summarize_group_weights(aw.export(), feature_spec), sample_path, pairwise_manager=pairwise)
 
         print('\n系统分析:')
         print(generated['evidence'])
@@ -551,15 +584,20 @@ def main():
         if not ans:
             ans = q['options'][-1][0]
 
-        answer_text, before, after = apply_answer_to_weights(aw, q, ans)
+        answer_text, before, after = apply_answer_to_weights(
+            aw,
+            q,
+            ans,
+            feature_expander=lambda keys: expand_feature_adjustments(keys, feature_spec),
+        )
         if answer_text is None:
             print('无效选项，跳过本次问题更新。')
             logs.append({'sample': sample_path, 'before': results, 'asked': True, 'question': q['id'], 'answer': ans, 'valid_answer': False})
             continue
 
         print('\n用户回答:', answer_text.format(a=results[0]['label'], b=results[1]['label']))
-        print('权重更新前:', pretty_weights(before))
-        print('权重更新后:', pretty_weights(after))
+        print('权重更新前:', pretty_group_weights(before, feature_spec))
+        print('权重更新后:', pretty_group_weights(after, feature_spec))
 
         print('\n重新识别结果:')
         new_results = model.predict(sample_path, aw.export())
@@ -571,7 +609,7 @@ def main():
         correction_info = None
         if decision in ('class', 'new') and label and label != predicted_label:
             correction_sample_path = pool_info.get('saved_to') or sample_path
-            correction_info = ask_correction_reason(predicted_label, label, pairwise, aw, sample_path=correction_sample_path)
+            correction_info = ask_correction_reason(predicted_label, label, pairwise, aw, feature_spec, sample_path=correction_sample_path)
         helpful = False
         if pool_info.get('decision') == 'confirmed':
             old_gap = results[0]['score'] - results[1]['score']
@@ -610,10 +648,11 @@ def main():
     final_weights = aw.export()
     question_state = q_selector.export()
     pairwise_state = pairwise.export()
-    report = make_experience_report(cfg, logs, final_weights, question_state, objects, pairwise_state=pairwise_state)
+    report = make_experience_report(cfg, logs, final_weights, question_state, objects, feature_spec, pairwise_state=pairwise_state)
     experience_summary = make_experience_summary(pairwise_state, objects)
 
-    save_json(output_dir / 'feature_weights.json', final_weights)
+    save_json(output_dir / 'feature_weights.json', summarize_group_weights(final_weights, feature_spec))
+    save_json(output_dir / 'internal_feature_weights.json', final_weights)
     save_json(output_dir / 'question_weights.json', question_state)
     save_json(output_dir / 'prototype_model.json', model.export())
     save_json(output_dir / 'logs' / 'demo_log.json', logs)
@@ -626,6 +665,7 @@ def main():
     print_header('演示结束')
     print('结果已保存到:', output_dir)
     print('特征权重:', output_dir / 'feature_weights.json')
+    print('内部特征权重:', output_dir / 'internal_feature_weights.json')
     print('问题权重:', output_dir / 'question_weights.json')
     print('学习日志:', output_dir / 'logs' / 'demo_log.json')
     print('经验报告:', output_dir / 'experience_report.json')

@@ -13,11 +13,14 @@ classes:
   - strawberry
 
 features:
-  color: true
-  size: true
-  contour: true
-  texture: true
-  quality: true
+  preset: fruit
+  groups:
+    color: true
+    shape: true
+    texture: true
+    size: true
+  system:
+    quality: true
 
 concepts:
   enable: true
@@ -26,10 +29,9 @@ concepts:
 learning:
   initial_weights:
     color: 0.28
-    size: 0.05
-    contour: 0.32
+    shape: 0.32
     texture: 0.25
-    quality: 0.10
+    size: 0.05
   default_feature_weight: 0.08
   update_step: 0.07
   min_weight: 0.05

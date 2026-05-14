@@ -68,7 +68,7 @@ def main():
                 'object_a': 'apple',
                 'object_b': 'strawberry',
                 'hint': '苹果和草莓都可能偏红，颜色不是唯一依据；轮廓和纹理通常更有区分价值。',
-                'important_features': ['contour', 'texture'],
+                'important_features': ['shape', 'texture'],
                 'weak_features': ['size']
             }
         ]

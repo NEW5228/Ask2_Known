@@ -15,9 +15,9 @@ FEATURE_TO_QUESTION = {
 
 REASON_TO_FEATURES = {
     'color': ['color'],
-    'shape': ['contour'],
+    'shape': ['shape'],
     'texture': ['texture'],
-    'cluster': ['texture', 'contour'],
+    'cluster': ['texture', 'shape'],
     'background': [],
     'quality': [],
     'size': ['size'],
@@ -101,7 +101,7 @@ def pair_key(a, b):
 
 
 class PairwiseExperienceManager:
-    def __init__(self, metadata_dir=None, path=None, version='0.3.6'):
+    def __init__(self, metadata_dir=None, path=None, version='0.3.7'):
         self.version = version
         if path is not None:
             self.path = Path(path)
@@ -232,7 +232,7 @@ class PairwiseExperienceManager:
                 return hints[top]
             if top == 'color':
                 return '请重点观察当前图片的颜色/色系是否和两个候选类别存在明显差异。'
-            if top == 'contour':
+            if top in ('shape', 'contour'):
                 return '请重点观察当前图片的整体形状、长宽比例、圆润程度或弯曲程度。'
             if top == 'texture':
                 return '请重点观察当前图片的表面纹理、颗粒感、局部重复结构。'
@@ -246,9 +246,9 @@ class PairwiseExperienceManager:
         cluster_hint = hints.get('cluster', '是否为单体物体、多个小物体聚集、重复结构不同。')
         return [
             ('A', 'color', color_hint, {'increase': ['color'], 'decrease': []}),
-            ('B', 'shape', shape_hint, {'increase': ['contour'], 'decrease': []}),
+            ('B', 'shape', shape_hint, {'increase': ['shape'], 'decrease': []}),
             ('C', 'texture', texture_hint, {'increase': ['texture'], 'decrease': []}),
-            ('D', 'cluster', cluster_hint, {'increase': ['texture', 'contour'], 'decrease': []}),
+            ('D', 'cluster', cluster_hint, {'increase': ['texture', 'shape'], 'decrease': []}),
             ('E', 'background', '背景、光线、遮挡或主体不清楚影响了判断。', {'increase': [], 'decrease': ['color', 'texture']}),
             ('F', 'other', '不确定 / 其他原因。', {'increase': [], 'decrease': []}),
         ]

@@ -2,7 +2,15 @@ from ask2know.concepts.basic_concepts import DISPLAY_NAMES, summarize_concepts
 
 
 def _feature_gap(top_a, top_b, feature):
-    return abs(float(top_a.get('detail', {}).get(feature, 0.0)) - float(top_b.get('detail', {}).get(feature, 0.0)))
+    a = top_a.get('group_detail', {}).get(
+        feature,
+        top_a.get('system_detail', {}).get(feature, top_a.get('detail', {}).get(feature, 0.0))
+    )
+    b = top_b.get('group_detail', {}).get(
+        feature,
+        top_b.get('system_detail', {}).get(feature, top_b.get('detail', {}).get(feature, 0.0))
+    )
+    return abs(float(a) - float(b))
 
 
 def _feature_sentence(gaps):
@@ -89,10 +97,10 @@ def generate_natural_question(top_a, top_b, question, weights, sample_path=None,
     qid = question['id']
     feature = question.get('feature', '')
 
-    enabled_features = ['color', 'size', 'contour', 'texture', 'quality']
+    enabled_features = list(top_a.get('group_detail', {}).keys())
     gaps = {}
     for name in enabled_features:
-        if name in top_a.get('detail', {}) or name in top_b.get('detail', {}):
+        if name in top_a.get('group_detail', {}) or name in top_b.get('group_detail', {}):
             gaps[name] = _feature_gap(top_a, top_b, name)
 
     evidence = _feature_sentence(gaps)

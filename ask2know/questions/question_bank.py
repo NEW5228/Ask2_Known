@@ -24,13 +24,13 @@ QUESTION_BANK = [
     },
     {
         'id': 'Q_CONTOUR_IMPORTANCE',
-        'feature': 'contour',
+        'feature': 'shape',
         'kind': 'feature_importance',
         'template': '{a} 和 {b} 是否主要通过轮廓/形状区分？',
         'options': [
-            ('A', '轮廓差异明显，形状很重要', {'increase': ['contour'], 'decrease': []}),
-            ('B', '轮廓差异不明显', {'increase': [], 'decrease': ['contour']}),
-            ('C', '当前图片角度/遮挡影响轮廓判断', {'increase': [], 'decrease': ['contour']}),
+            ('A', '轮廓差异明显，形状很重要', {'increase': ['shape'], 'decrease': []}),
+            ('B', '轮廓差异不明显', {'increase': [], 'decrease': ['shape']}),
+            ('C', '当前图片角度/遮挡影响轮廓判断', {'increase': [], 'decrease': ['shape']}),
             ('D', '不确定', {'increase': [], 'decrease': []}),
         ]
     },
@@ -52,8 +52,8 @@ QUESTION_BANK = [
         'kind': 'sample_quality',
         'template': '这张图片是否适合作为学习样本？',
         'options': [
-            ('A', '适合，主体清晰，背景干扰少', {'increase': ['texture', 'contour'], 'decrease': []}),
-            ('B', '不适合，太糊/遮挡/主体不明显', {'increase': [], 'decrease': ['texture', 'contour']}),
+            ('A', '适合，主体清晰，背景干扰少', {'increase': ['texture', 'shape'], 'decrease': []}),
+            ('B', '不适合，太糊/遮挡/主体不明显', {'increase': [], 'decrease': ['texture', 'shape']}),
             ('C', '可以判断，但不要加入正式样本库', {'increase': [], 'decrease': []}),
             ('D', '不确定', {'increase': [], 'decrease': []}),
         ]

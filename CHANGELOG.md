@@ -1,4 +1,13 @@
-# a2k_v0.3.6 更新日志
+# a2k_v0.3.7 更新日志
+
+## v0.3.7 新增/调整
+
+- 新增水果优先的细化特征：`fruit_color`、`fruit_shape`、`fruit_texture`、`fruit_structure`。
+- 新增用户可选特征组：`color`、`shape`、`texture`、`size`。
+- `quality` 改为系统内部样本质量检查，不再作为用户可选训练特征展示。
+- 新版任务配置使用 `features.preset`、`features.groups`、`features.system`。
+- `scripts/init_task.py` 支持 `--feature-preset` 和 `--features`。
+- `feature_weights.json` 输出用户可见特征组权重，内部权重另存为 `internal_feature_weights.json`。
 
 ## 版本定位
 

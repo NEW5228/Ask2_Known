@@ -1,0 +1,155 @@
+USER_FEATURE_GROUPS = ('color', 'shape', 'texture', 'size')
+SYSTEM_FEATURES = ('quality',)
+
+FRUIT_CLASS_NAMES = {
+    'apple', 'banana', 'pear', 'grape', 'orange', 'peach', 'cherry',
+    'strawberry', 'lemon', 'lime', 'mango', 'watermelon', 'kiwi',
+    'pineapple', 'plum', 'apricot', 'blueberry', 'raspberry',
+}
+
+PRESET_FEATURES = {
+    'general': {
+        'color': ['color'],
+        'shape': ['contour'],
+        'texture': ['texture'],
+        'size': ['size'],
+    },
+    'fruit': {
+        'color': ['color', 'fruit_color'],
+        'shape': ['contour', 'fruit_shape', 'fruit_structure'],
+        'texture': ['texture', 'fruit_texture'],
+        'size': ['size'],
+    },
+}
+
+DEFAULT_GROUP_WEIGHTS = {
+    'color': 0.28,
+    'shape': 0.32,
+    'texture': 0.25,
+    'size': 0.05,
+}
+
+
+def infer_feature_preset(classes):
+    names = {str(name).strip().lower() for name in (classes or [])}
+    return 'fruit' if names & FRUIT_CLASS_NAMES else 'general'
+
+
+def resolve_feature_preset(preset, classes=None):
+    preset = str(preset or 'auto').strip().lower()
+    if preset == 'auto':
+        return infer_feature_preset(classes)
+    if preset not in PRESET_FEATURES:
+        raise ValueError(f'Unsupported feature preset: {preset}. Use auto, general, or fruit.')
+    return preset
+
+
+def parse_feature_config(cfg, classes=None):
+    raw = cfg.get('features')
+    if not isinstance(raw, dict) or 'groups' not in raw:
+        raise ValueError(
+            'Unsupported feature config. Use the new format: '
+            'features: {preset: fruit, groups: {color: true, shape: true, texture: true, size: true}, '
+            'system: {quality: true}}.'
+        )
+
+    preset = resolve_feature_preset(raw.get('preset', 'auto'), classes)
+    groups_raw = raw.get('groups') or {}
+    system_raw = raw.get('system') or {}
+
+    groups = {name: bool(groups_raw.get(name, True)) for name in USER_FEATURE_GROUPS}
+    system = {name: bool(system_raw.get(name, True)) for name in SYSTEM_FEATURES}
+
+    group_features = {}
+    scoring_features = []
+    for group in USER_FEATURE_GROUPS:
+        if not groups[group]:
+            continue
+        internal = list(PRESET_FEATURES[preset].get(group, []))
+        group_features[group] = internal
+        for name in internal:
+            if name not in scoring_features:
+                scoring_features.append(name)
+
+    system_features = [name for name in SYSTEM_FEATURES if system.get(name, True)]
+    all_features = list(scoring_features)
+    for name in system_features:
+        if name not in all_features:
+            all_features.append(name)
+
+    feature_to_group = {}
+    for group, names in group_features.items():
+        for name in names:
+            feature_to_group[name] = group
+
+    return {
+        'preset': preset,
+        'groups': groups,
+        'system': system,
+        'display_features': [name for name in USER_FEATURE_GROUPS if groups.get(name)],
+        'scoring_features': scoring_features,
+        'system_features': system_features,
+        'all_features': all_features,
+        'group_features': group_features,
+        'feature_to_group': feature_to_group,
+    }
+
+
+def expand_feature_keys(keys, feature_spec):
+    expanded = []
+    group_features = feature_spec.get('group_features', {})
+    scoring = set(feature_spec.get('scoring_features', []))
+    system = set(feature_spec.get('system_features', []))
+    for key in keys or []:
+        if key in group_features:
+            candidates = group_features[key]
+        elif key in scoring or key in system:
+            candidates = [key]
+        else:
+            candidates = []
+        for name in candidates:
+            if name not in expanded:
+                expanded.append(name)
+    return expanded
+
+
+def expand_feature_adjustments(keys, feature_spec):
+    adjustments = {}
+    group_features = feature_spec.get('group_features', {})
+    scoring = set(feature_spec.get('scoring_features', []))
+    system = set(feature_spec.get('system_features', []))
+    for key in keys or []:
+        if key in group_features:
+            candidates = group_features[key]
+            factor = 1.0 / max(1, len(candidates))
+        elif key in scoring or key in system:
+            candidates = [key]
+            factor = 1.0
+        else:
+            candidates = []
+            factor = 0.0
+        for name in candidates:
+            adjustments[name] = adjustments.get(name, 0.0) + factor
+    return adjustments
+
+
+def initial_feature_weights(cfg, feature_spec):
+    learning = cfg.get('learning', {})
+    configured = dict(learning.get('initial_weights', {}))
+    default_weight = float(learning.get('default_feature_weight', 0.08))
+    weights = {}
+    for group, names in feature_spec.get('group_features', {}).items():
+        group_weight = float(configured.get(group, DEFAULT_GROUP_WEIGHTS.get(group, default_weight)))
+        split_weight = group_weight / max(1, len(names))
+        for name in names:
+            weights[name] = split_weight
+    return weights
+
+
+def summarize_group_weights(weights, feature_spec):
+    summary = {}
+    for group, names in feature_spec.get('group_features', {}).items():
+        vals = [float(weights[name]) for name in names if name in weights]
+        if vals:
+            summary[group] = sum(vals)
+    return summary

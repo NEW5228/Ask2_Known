@@ -1,4 +1,4 @@
-def apply_answer_to_weights(adaptive_weights, question, selected_key):
+def apply_answer_to_weights(adaptive_weights, question, selected_key, feature_expander=None):
     selected = None
     for key, text, action in question['options']:
         if key.upper() == selected_key.upper():
@@ -7,7 +7,12 @@ def apply_answer_to_weights(adaptive_weights, question, selected_key):
     if selected is None:
         return None, None, None
     key, text, action = selected
-    before, after = adaptive_weights.update(action.get('increase', []), action.get('decrease', []))
+    increase = action.get('increase', [])
+    decrease = action.get('decrease', [])
+    if feature_expander is not None:
+        increase = feature_expander(increase)
+        decrease = feature_expander(decrease)
+    before, after = adaptive_weights.update(increase, decrease)
     return text, before, after
 
 def update_question_reward(question_weights, question_id, was_helpful):

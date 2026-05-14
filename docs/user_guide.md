@@ -16,6 +16,14 @@ pip install -r requirements.txt
 python scripts\init_task.py --name fruit_task --classes apple banana pear grape orange --output D:\a2k_test
 ```
 
+创建任务时可以选择特征预设和用户可见特征：
+
+```bat
+python scripts\init_task.py --name fruit_task --classes apple banana pear --output D:\a2k_test --feature-preset fruit --features color shape texture size
+```
+
+用户可见特征为 `color`、`shape`、`texture`、`size`。系统会内部启用 `quality` 做样本质量检查，但不会把它当作用户选择过的训练特征显示。
+
 任务创建后，已知样本放入：
 
 ```text

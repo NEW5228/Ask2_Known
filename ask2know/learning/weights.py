@@ -8,12 +8,12 @@ class AdaptiveWeights:
 
     def apply_concepts(self, concepts):
         for c in concepts:
-            for f in c.get('important_features', []):
+            for f, factor in self._adjustments(c.get('important_features', [])):
                 if f in self.weights:
-                    self.weights[f] += self.step
-            for f in c.get('weak_features', []):
+                    self.weights[f] += self.step * factor
+            for f, factor in self._adjustments(c.get('weak_features', [])):
                 if f in self.weights:
-                    self.weights[f] -= self.step
+                    self.weights[f] -= self.step * factor
         self._clip()
         self._normalize()
 
@@ -21,15 +21,20 @@ class AdaptiveWeights:
         increase = increase or []
         decrease = decrease or []
         before = dict(self.weights)
-        for f in increase:
+        for f, factor in self._adjustments(increase):
             if f in self.weights:
-                self.weights[f] += self.step
-        for f in decrease:
+                self.weights[f] += self.step * factor
+        for f, factor in self._adjustments(decrease):
             if f in self.weights:
-                self.weights[f] -= self.step
+                self.weights[f] -= self.step * factor
         self._clip()
         self._normalize()
         return before, dict(self.weights)
+
+    def _adjustments(self, items):
+        if isinstance(items, dict):
+            return [(k, float(v)) for k, v in items.items()]
+        return [(k, 1.0) for k in (items or [])]
 
     def _clip(self):
         for k in self.weights:

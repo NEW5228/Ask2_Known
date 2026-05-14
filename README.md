@@ -1,6 +1,6 @@
 # Ask2Know
 
-Ask2Know 是一个面向个人和小团队的低样本主动教学训练框架。v0.3.6 开始尝试加入基础视觉概念层，让系统在浅层特征之外初步理解“偏红、接近圆形、长条形、表面平滑、聚集感、主体清晰”等可复用概念。
+Ask2Know 是一个面向个人和小团队的低样本主动教学训练框架。v0.3.7 加入水果优先的细化特征和用户可选特征组，让系统在浅层特征之外初步理解“偏红、接近圆形、长条形、表面平滑、聚集感、主体清晰”等可复用概念。
 
 ## 安装
 
@@ -15,6 +15,14 @@ pip install -r requirements.txt
 ```bat
 python scripts\init_task.py --name fruit_test3 --classes apple banana pear grape orange --output D:\a2k_test
 ```
+
+可以在创建任务时选择特征预设和用户可见特征：
+
+```bat
+python scripts\init_task.py --name fruit_test3 --classes apple banana pear --output D:\a2k_test --feature-preset fruit --features color shape texture size
+```
+
+用户可选特征只有 `color`、`shape`、`texture`、`size`。`quality` 是系统内部的样本质量检查，用来判断主体是否清晰、背景是否干扰，不作为用户选择的训练特征展示。
 
 ## 运行内置 demo
 
@@ -41,7 +49,7 @@ D:\a2k_test\fruit_test3\datasets\train\cherry
 
 ## 运行旧项目继续学习
 
-v0.3.6 默认不弹窗，避免图片查看器卡死。
+v0.3.7 默认不弹窗，避免图片查看器卡死。
 
 ```bat
 python run_demo.py --config D:\a2k_test\fruit_test3\configs\task_config.yaml
@@ -61,7 +69,7 @@ python run_demo.py --config D:\a2k_test\fruit_test3\configs\task_config.yaml --p
 
 ## 错误后追问多选
 
-如果系统把 grape 识别成 apple，用户纠正后，系统会追问为什么错。v0.3.6 支持多选：
+如果系统把 grape 识别成 apple，用户纠正后，系统会追问为什么错。v0.3.7 支持多选：
 
 ```text
 A. 颜色或色系差异明显
@@ -97,7 +105,7 @@ metadata/experience_summary.json
 
 ## 基础视觉概念层
 
-v0.3.6 默认启用轻量概念层：
+v0.3.7 默认启用轻量概念层：
 
 ```yaml
 concepts:
@@ -109,7 +117,7 @@ concepts:
 
 ## 数据增强
 
-v0.3.6 默认启用温和增强，用于建立类别原型：亮度、轻微旋转、轻微裁剪。可以在 `task_config.yaml` 中关闭：
+v0.3.7 默认启用温和增强，用于建立类别原型：亮度、轻微旋转、轻微裁剪。可以在 `task_config.yaml` 中关闭：
 
 ```yaml
 augmentation:
@@ -126,4 +134,4 @@ augmentation:
 
 ## 版本纪律
 
-v0.4.0 之前如果还有 bug，不强行进入 v0.4.0。继续用 v0.3.5.1、v0.3.6 等补丁版本修复，直到 v0.3.x 稳定。
+v0.4.0 之前如果还有 bug，不强行进入 v0.4.0。继续用 v0.3.7 等补丁版本修复，直到 v0.3.x 稳定。

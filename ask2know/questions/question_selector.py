@@ -6,15 +6,22 @@ def _clip01(value):
 
 
 class QuestionSelector:
-    def __init__(self, question_weights=None, pairwise_manager=None):
+    def __init__(self, question_weights=None, pairwise_manager=None, enabled_features=None):
         self.question_weights = question_weights or {q['id']: 1.0 for q in QUESTION_BANK}
         self.last_question_id = None
         self.ask_counts = {q['id']: 0 for q in QUESTION_BANK}
         self.pairwise_manager = pairwise_manager
+        self.enabled_features = set(enabled_features or [])
+
+    def _feature_score(self, result, feature, kind):
+        if kind == 'sample_quality':
+            return result.get('system_detail', {}).get(feature, result.get('detail', {}).get(feature))
+        group_detail = result.get('group_detail', {})
+        if feature in group_detail:
+            return group_detail.get(feature)
+        return result.get('detail', {}).get(feature)
 
     def select(self, top_a, top_b, weights=None):
-        detail_a = top_a.get('detail', {})
-        detail_b = top_b.get('detail', {})
         label_a = top_a.get('label')
         label_b = top_b.get('label')
         weights = weights or {}
@@ -28,9 +35,14 @@ class QuestionSelector:
         for q in QUESTION_BANK:
             feature = q['feature']
             qid = q['id']
-            feature_available = feature in detail_a or feature in detail_b
-            a_score = float(detail_a.get(feature, 0.0))
-            b_score = float(detail_b.get(feature, 0.0))
+            kind = q.get('kind')
+            if kind != 'sample_quality' and self.enabled_features and feature not in self.enabled_features:
+                continue
+            raw_a = self._feature_score(top_a, feature, kind)
+            raw_b = self._feature_score(top_b, feature, kind)
+            feature_available = raw_a is not None or raw_b is not None
+            a_score = float(raw_a or 0.0)
+            b_score = float(raw_b or 0.0)
             gap = abs(a_score - b_score)
             top_feature_score = max(a_score, b_score)
             bottom_feature_score = min(a_score, b_score)

@@ -161,6 +161,195 @@ def quality_feature(img, mask):
     return np.array([area_ratio, blur_score], dtype=np.float32)
 
 
+def fruit_color_feature(img, mask):
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    pixels = hsv[mask > 0]
+    if pixels.size == 0:
+        return np.zeros(13, dtype=np.float32)
+
+    h = pixels[:, 0]
+    s = pixels[:, 1]
+    v = pixels[:, 2]
+    valid = (s > 35) & (v > 30)
+    hv = h[valid]
+    total = max(1, hv.size)
+
+    red = ((hv < 10) | (hv > 165)).sum() / total
+    orange = ((hv >= 10) & (hv < 25)).sum() / total
+    yellow = ((hv >= 25) & (hv < 38)).sum() / total
+    green = ((hv >= 38) & (hv < 85)).sum() / total
+    purple = ((hv >= 125) & (hv < 165)).sum() / total
+    brown_dark = ((h >= 5) & (h < 28) & (s > 50) & (v < 130)).sum() / max(1, pixels.shape[0])
+    bright_patch = ((v > 205) & (s > 25)).sum() / max(1, pixels.shape[0])
+    high_sat = (s > 110).sum() / max(1, pixels.shape[0])
+    color_bins = np.array([red, orange, yellow, green, purple], dtype=np.float32)
+    dominance = float(color_bins.max()) if color_bins.size else 0.0
+    stats = np.array([
+        float(s.mean()) / 255.0,
+        float(v.mean()) / 255.0,
+        min(float(s.std()) / 128.0, 1.0),
+        min(float(v.std()) / 128.0, 1.0),
+    ], dtype=np.float32)
+    return np.concatenate([
+        color_bins,
+        np.array([brown_dark, bright_patch, high_sat, dominance], dtype=np.float32),
+        stats,
+    ]).astype(np.float32)
+
+
+def fruit_shape_feature(img, mask):
+    mask = _largest_component_mask(mask)
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return np.zeros(11, dtype=np.float32)
+
+    c = max(contours, key=cv2.contourArea)
+    area = max(1.0, cv2.contourArea(c))
+    peri = max(1.0, cv2.arcLength(c, True))
+    x, y, w, h = cv2.boundingRect(c)
+    rect_area = max(1.0, float(w * h))
+    hull_area = max(1.0, cv2.contourArea(cv2.convexHull(c)))
+    aspect = float(w) / max(1.0, float(h))
+    circularity = 4 * np.pi * area / (peri * peri + 1e-6)
+    elongated = max(aspect, 1.0 / max(aspect, 1e-6))
+    elongated_score = min((elongated - 1.0) / 2.6, 1.0)
+    solidity = area / hull_area
+    extent = area / rect_area
+
+    roi = mask[y:y+h, x:x+w]
+    if roi.size == 0 or h < 4:
+        top_width = bottom_width = symmetry = curve_signal = 0.0
+    else:
+        top = roi[:max(1, h // 2), :]
+        bottom = roi[max(1, h // 2):, :]
+        top_cols = np.where(top.max(axis=0) > 0)[0]
+        bottom_cols = np.where(bottom.max(axis=0) > 0)[0]
+        top_width = (top_cols[-1] - top_cols[0] + 1) / max(1.0, float(w)) if top_cols.size else 0.0
+        bottom_width = (bottom_cols[-1] - bottom_cols[0] + 1) / max(1.0, float(w)) if bottom_cols.size else 0.0
+        flipped = cv2.flip(roi, 1)
+        overlap = cv2.countNonZero(cv2.bitwise_and(roi, flipped))
+        union = cv2.countNonZero(cv2.bitwise_or(roi, flipped))
+        symmetry = float(overlap) / max(1.0, float(union))
+
+        centers_y = []
+        centers_x = []
+        for row in range(h):
+            cols = np.where(roi[row, :] > 0)[0]
+            if cols.size:
+                centers_y.append(row / max(1.0, float(h - 1)))
+                centers_x.append(float(cols.mean()) / max(1.0, float(w - 1)))
+        if len(centers_y) >= 8:
+            coef = np.polyfit(np.asarray(centers_y), np.asarray(centers_x), 2)
+            curve_signal = min(abs(float(coef[0])) * 2.5, 1.0)
+        else:
+            curve_signal = 0.0
+
+    pear_ratio = min((bottom_width / max(top_width, 1e-6)) / 3.0, 1.0)
+    round_score = min(circularity, 1.0) * (1.0 - min(abs(np.log(max(aspect, 1e-6))) / np.log(3.0), 1.0))
+    banana_like = min(0.6 * elongated_score + 0.4 * curve_signal, 1.0)
+
+    return np.array([
+        round_score,
+        elongated_score,
+        pear_ratio,
+        min(aspect / 3.0, 1.0),
+        min((1.0 / max(aspect, 1e-6)) / 3.0, 1.0),
+        min(solidity, 1.0),
+        min(extent, 1.0),
+        top_width,
+        bottom_width,
+        symmetry,
+        banana_like,
+    ], dtype=np.float32)
+
+
+def fruit_texture_feature(img, mask):
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    vals = gray[mask > 0]
+    pixels = hsv[mask > 0]
+    if vals.size == 0 or pixels.size == 0:
+        return np.zeros(7, dtype=np.float32)
+
+    masked_area = max(1.0, float(cv2.countNonZero(mask)))
+    edges = cv2.Canny(gray, 45, 135)
+    edge_density = float(cv2.countNonZero(cv2.bitwise_and(edges, edges, mask=mask))) / masked_area
+    lap = cv2.Laplacian(gray, cv2.CV_64F)
+    lap_vals = lap[mask > 0]
+    lap_var = min(float(lap_vals.var()) / 1500.0, 1.0) if lap_vals.size else 0.0
+    local_mean = cv2.blur(gray, (9, 9))
+    local_delta = cv2.absdiff(gray, local_mean)
+    local_contrast = min(float(local_delta[mask > 0].mean()) / 48.0, 1.0)
+    hist = np.bincount(vals.astype(np.uint8), minlength=256).astype(np.float32)
+    p = hist / (hist.sum() + 1e-8)
+    entropy = float(-(p[p > 0] * np.log2(p[p > 0])).sum() / 8.0)
+
+    h = pixels[:, 0]
+    s = pixels[:, 1]
+    v = pixels[:, 2]
+    dark_spots = ((v < 95) & (s > 35)).sum() / max(1, pixels.shape[0])
+    bright_spots = ((v > 205) & (s < 95)).sum() / max(1, pixels.shape[0])
+    roughness = min(0.35 * edge_density * 2.5 + 0.35 * lap_var + 0.30 * local_contrast, 1.0)
+    return np.array([
+        min(edge_density * 2.5, 1.0),
+        lap_var,
+        local_contrast,
+        min(entropy, 1.0),
+        dark_spots,
+        bright_spots,
+        roughness,
+    ], dtype=np.float32)
+
+
+def fruit_structure_feature(img, mask):
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    masked_area = max(1.0, float(cv2.countNonZero(mask)))
+    edges = cv2.Canny(gray, 45, 135)
+    edge_mask = cv2.bitwise_and(edges, edges, mask=mask)
+    edge_density = float(cv2.countNonZero(edge_mask)) / masked_area
+
+    contours, _ = cv2.findContours(edge_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    small_round = 0
+    for c in contours:
+        area = cv2.contourArea(c)
+        if area < 8 or area > masked_area * 0.12:
+            continue
+        peri = cv2.arcLength(c, True)
+        if peri <= 1:
+            continue
+        circularity = 4 * np.pi * area / (peri * peri + 1e-6)
+        if circularity > 0.35:
+            small_round += 1
+    small_round_norm = min(small_round / 18.0, 1.0)
+
+    component_count, _, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
+    foreground_components = 0
+    for idx in range(1, component_count):
+        if stats[idx, cv2.CC_STAT_AREA] >= masked_area * 0.015:
+            foreground_components += 1
+    component_signal = min(foreground_components / 6.0, 1.0)
+
+    contours_main, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if contours_main:
+        c = max(contours_main, key=cv2.contourArea)
+        hull_area = max(1.0, cv2.contourArea(cv2.convexHull(c)))
+        solidity = cv2.contourArea(c) / hull_area
+    else:
+        solidity = 0.0
+
+    repeated_parts = min(0.55 * small_round_norm + 0.45 * min(edge_density * 2.8, 1.0), 1.0)
+    cluster_like = min(0.45 * repeated_parts + 0.35 * component_signal + 0.20 * (1.0 - min(solidity, 1.0)), 1.0)
+    single_object = max(0.0, 1.0 - cluster_like)
+    return np.array([
+        cluster_like,
+        repeated_parts,
+        small_round_norm,
+        min(edge_density * 2.8, 1.0),
+        single_object,
+        min(solidity, 1.0),
+    ], dtype=np.float32)
+
+
 def extract_features_from_image(img):
     img = cv2.resize(img, (256, 256))
     mask = _main_mask(img)
@@ -171,6 +360,10 @@ def extract_features_from_image(img):
         'contour': contour_feature(img, mask),
         'texture': texture_feature(img, mask),
         'quality': quality_feature(img, mask),
+        'fruit_color': fruit_color_feature(img, mask),
+        'fruit_shape': fruit_shape_feature(img, mask),
+        'fruit_texture': fruit_texture_feature(img, mask),
+        'fruit_structure': fruit_structure_feature(img, mask),
     }
 
 
