@@ -422,6 +422,161 @@ def surface_mark_feature(img, mask):
     ], dtype=np.float32)
 
 
+def fruit_part_feature(img, mask):
+    mask = _largest_component_mask(mask)
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    masked_area = max(1.0, float(cv2.countNonZero(mask)))
+    pixels = hsv[mask > 0]
+    if pixels.size == 0:
+        return np.zeros(10, dtype=np.float32)
+
+    ys, xs = np.where(mask > 0)
+    if xs.size == 0:
+        return np.zeros(10, dtype=np.float32)
+    cx = float(xs.mean())
+    cy = float(ys.mean())
+    dist = np.sqrt((xs.astype(np.float32) - cx) ** 2 + (ys.astype(np.float32) - cy) ** 2)
+    max_dist = max(float(dist.max()), 1.0)
+    norm = dist / max_dist
+
+    ring_map = np.zeros_like(mask, dtype=np.float32)
+    ring_map[ys, xs] = norm
+    outer_mask = np.zeros_like(mask)
+    mid_mask = np.zeros_like(mask)
+    inner_mask = np.zeros_like(mask)
+    outer_mask[(mask > 0) & (ring_map >= 0.72)] = 255
+    mid_mask[(mask > 0) & (ring_map >= 0.42) & (ring_map < 0.72)] = 255
+    inner_mask[(mask > 0) & (ring_map < 0.42)] = 255
+
+    def _mean_hsv(region_mask):
+        vals = hsv[region_mask > 0]
+        if vals.size == 0:
+            return np.zeros(3, dtype=np.float32)
+        return vals.mean(axis=0).astype(np.float32)
+
+    outer = _mean_hsv(outer_mask)
+    inner = _mean_hsv(inner_mask)
+    color_contrast = min(float(np.linalg.norm((outer - inner) / np.array([90.0, 128.0, 128.0], dtype=np.float32))) / 1.25, 1.0)
+    inner_area = cv2.countNonZero(inner_mask) / masked_area
+    outer_area = cv2.countNonZero(outer_mask) / masked_area
+
+    edges = cv2.Canny(gray, 40, 130)
+    inner_edges = float(cv2.countNonZero(cv2.bitwise_and(edges, edges, mask=inner_mask))) / max(1.0, float(cv2.countNonZero(inner_mask)))
+    all_edges = float(cv2.countNonZero(cv2.bitwise_and(edges, edges, mask=mask))) / masked_area
+    inner_bright = ((inner_mask > 0) & (gray > 145)).sum() / max(1.0, float(cv2.countNonZero(inner_mask)))
+    inner_sat = hsv[:, :, 1][inner_mask > 0].mean() / 255.0 if cv2.countNonZero(inner_mask) else 0.0
+    outer_dark = hsv[:, :, 2][outer_mask > 0].mean() / 255.0 if cv2.countNonZero(outer_mask) else 0.0
+    outer_dark = 1.0 - float(outer_dark)
+
+    peel_h = hsv[:, :, 0][outer_mask > 0]
+    peel_s = hsv[:, :, 1][outer_mask > 0]
+    peel_v = hsv[:, :, 2][outer_mask > 0]
+    if peel_h.size:
+        outer_green_brown = (
+            (((peel_h >= 5) & (peel_h < 35) & (peel_s > 35) & (peel_v < 175)).sum()
+             + ((peel_h >= 35) & (peel_h < 85) & (peel_s > 35)).sum())
+            / max(1, peel_h.size)
+        )
+    else:
+        outer_green_brown = 0.0
+
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if contours:
+        c = max(contours, key=cv2.contourArea)
+        area = max(1.0, cv2.contourArea(c))
+        peri = max(1.0, cv2.arcLength(c, True))
+        circularity = min(4 * np.pi * area / (peri * peri + 1e-6), 1.0)
+    else:
+        circularity = 0.0
+
+    _, dark = cv2.threshold(gray, 90, 255, cv2.THRESH_BINARY_INV)
+    dark_inner = cv2.bitwise_and(dark, dark, mask=cv2.bitwise_or(inner_mask, mid_mask))
+    component_count, _, stats, _ = cv2.connectedComponentsWithStats(dark_inner, 8)
+    seed_count = 0
+    seed_area = 0.0
+    for idx in range(1, component_count):
+        area = float(stats[idx, cv2.CC_STAT_AREA])
+        if 3 <= area <= masked_area * 0.018:
+            seed_count += 1
+            seed_area += area
+    seed_density = min(seed_count / 28.0, 1.0)
+    seed_area_ratio = min(seed_area / max(masked_area * 0.08, 1.0), 1.0)
+
+    center_mask = np.zeros_like(mask)
+    center_mask[(mask > 0) & (ring_map < 0.22)] = 255
+    center_vals = hsv[center_mask > 0]
+    center_contrast = 0.0
+    if center_vals.size and pixels.size:
+        center_mean = center_vals.mean(axis=0).astype(np.float32)
+        global_mean = pixels.mean(axis=0).astype(np.float32)
+        center_contrast = min(float(np.linalg.norm((center_mean - global_mean) / np.array([90.0, 128.0, 128.0], dtype=np.float32))) / 1.1, 1.0)
+
+    line_mask = cv2.bitwise_and(edges, edges, mask=cv2.bitwise_or(inner_mask, mid_mask))
+    lines = cv2.HoughLinesP(line_mask, 1, np.pi / 180, threshold=18, minLineLength=20, maxLineGap=5)
+    radial_signal = 0.0
+    if lines is not None:
+        radial = 0
+        total = 0
+        for line in lines[:, 0, :]:
+            x1, y1, x2, y2 = [float(x) for x in line]
+            dx = x2 - x1
+            dy = y2 - y1
+            length = float(np.hypot(dx, dy))
+            if length < 1.0:
+                continue
+            mx = (x1 + x2) * 0.5
+            my = (y1 + y2) * 0.5
+            vx = mx - cx
+            vy = my - cy
+            radial_len = float(np.hypot(vx, vy))
+            if radial_len < 1.0:
+                continue
+            cosine = abs((dx * vx + dy * vy) / (length * radial_len))
+            total += 1
+            if cosine > 0.72:
+                radial += 1
+        radial_signal = min((radial / max(1, total)) * min(total / 8.0, 1.0), 1.0)
+
+    boundary_evidence = max(0.0, min(1.0, (color_contrast - 0.34) / 0.66))
+    structure_evidence = max(
+        seed_density,
+        radial_signal,
+        max(0.0, min(1.0, (center_contrast - 0.36) / 0.64)),
+    )
+    visible_inner = min(inner_area * 4.0, 1.0) * max(boundary_evidence, 0.65 * structure_evidence)
+
+    peel_like = min(0.38 * color_contrast + 0.28 * outer_green_brown + 0.20 * outer_dark + 0.14 * min(outer_area * 2.2, 1.0), 1.0)
+    raw_flesh = 0.55 * inner_bright + 0.45 * inner_sat
+    flesh_like = min(raw_flesh * visible_inner * (0.35 + 0.65 * structure_evidence), 1.0)
+    seed_like = min(0.58 * seed_density + 0.32 * seed_area_ratio + 0.10 * min(all_edges * 5.0, 1.0), 1.0)
+    cut_surface = min(
+        (0.50 * boundary_evidence + 0.32 * structure_evidence + 0.18 * circularity)
+        * (0.30 + 0.70 * max(structure_evidence, seed_like)),
+        1.0,
+    )
+    core_like = min(
+        (0.70 * max(0.0, min(1.0, (center_contrast - 0.30) / 0.70)) + 0.30 * radial_signal)
+        * (0.30 + 0.70 * boundary_evidence),
+        1.0,
+    )
+    segment_like = min(radial_signal * (0.35 + 0.65 * max(boundary_evidence, cut_surface)), 1.0)
+    rind_like = min((0.62 * peel_like + 0.38 * min(outer_area * 3.0, 1.0)) * (0.45 + 0.55 * boundary_evidence), 1.0)
+
+    return np.array([
+        peel_like,
+        flesh_like,
+        cut_surface,
+        seed_like,
+        core_like,
+        segment_like,
+        rind_like,
+        color_contrast,
+        seed_density,
+        radial_signal,
+    ], dtype=np.float32)
+
+
 def text_mark_feature(img, mask):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     masked_area = max(1.0, float(cv2.countNonZero(mask)))
@@ -578,6 +733,7 @@ def extract_features_from_image(img):
         'fruit_texture': fruit_texture_feature(img, mask),
         'fruit_structure': fruit_structure_feature(img, mask),
         'surface_mark': surface_mark_feature(img, mask),
+        'fruit_part': fruit_part_feature(img, mask),
         'text_mark': text_mark_feature(img, mask),
         'sign_symbol': sign_symbol_feature(img, mask),
     }

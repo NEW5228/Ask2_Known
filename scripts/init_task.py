@@ -9,13 +9,13 @@ if str(ROOT) not in sys.path:
 
 from ask2know.features.feature_config import (
     DEFAULT_GROUP_WEIGHTS,
-    DEFAULT_USER_FEATURE_GROUPS,
+    PRESET_DEFAULT_GROUPS,
     USER_FEATURE_GROUPS,
     infer_feature_preset,
     resolve_feature_preset,
 )
 
-VERSION = '0.3.7.2'
+VERSION = '0.3.7.3'
 
 
 def write_json(path, data):
@@ -120,10 +120,7 @@ def main():
     if args.feature_preset == 'auto':
         feature_preset = infer_feature_preset(args.classes)
     if args.features is None:
-        if feature_preset == 'traffic_sign':
-            enabled_features = ['color', 'shape', 'text', 'sign']
-        else:
-            enabled_features = list(DEFAULT_USER_FEATURE_GROUPS)
+        enabled_features = list(PRESET_DEFAULT_GROUPS.get(feature_preset, PRESET_DEFAULT_GROUPS['general']))
     else:
         enabled_features = list(dict.fromkeys(args.features))
     project_root = Path(args.output).expanduser().resolve() / task_name

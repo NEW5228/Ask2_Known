@@ -29,6 +29,13 @@ CONCEPT_NAMES = [
     'rough_peel',
     'speckled_surface',
     'glossy_surface',
+    'peel_like',
+    'flesh_like',
+    'cut_surface',
+    'seed_like',
+    'core_like',
+    'segment_like',
+    'rind_like',
     'single_object',
     'cluster_like',
     'repeated_parts',
@@ -68,6 +75,13 @@ DISPLAY_NAMES = {
     'rough_peel': '表皮较粗糙',
     'speckled_surface': '有斑点/籽点',
     'glossy_surface': '表面有反光',
+    'peel_like': '有果皮感',
+    'flesh_like': '有果肉感',
+    'cut_surface': '切面明显',
+    'seed_like': '有籽点',
+    'core_like': '有果核/中心结构',
+    'segment_like': '有瓣状结构',
+    'rind_like': '有厚皮/瓜皮感',
     'single_object': '更像单体',
     'cluster_like': '有聚集感',
     'repeated_parts': '有重复结构',
@@ -86,6 +100,12 @@ def _clip01(value):
         return max(0.0, min(1.0, float(value)))
     except Exception:
         return 0.0
+
+
+def _activate(value, start, end=1.0):
+    if end <= start:
+        return _clip01(value)
+    return _clip01((float(value) - float(start)) / (float(end) - float(start)))
 
 
 def _safe_array(value):
@@ -161,6 +181,16 @@ def concepts_from_features(features):
         concepts['rough_peel'] = _clip01(surface[1])
         concepts['speckled_surface'] = _clip01(surface[2])
         concepts['glossy_surface'] = _clip01(surface[3])
+
+    fruit_part = _safe_array(features.get('fruit_part'))
+    if fruit_part.size >= 7:
+        concepts['peel_like'] = _clip01(fruit_part[0])
+        concepts['flesh_like'] = _activate(fruit_part[1], 0.25, 0.85)
+        concepts['cut_surface'] = _activate(fruit_part[2], 0.55, 0.90)
+        concepts['seed_like'] = _activate(fruit_part[3], 0.25, 0.85)
+        concepts['core_like'] = _activate(fruit_part[4], 0.35, 0.90)
+        concepts['segment_like'] = _activate(fruit_part[5], 0.50, 0.90)
+        concepts['rind_like'] = _activate(fruit_part[6], 0.45, 0.90)
 
     quality = _safe_array(features.get('quality'))
     if quality.size >= 2:

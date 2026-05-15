@@ -11,6 +11,7 @@ CONCEPTS_BY_GROUP = {
     'shape': {'round', 'elongated', 'pear_like', 'rectangular_like', 'single_object', 'cluster_like', 'repeated_parts'},
     'texture': {'smooth_surface', 'texture_rich', 'edge_rich', 'cluster_like', 'repeated_parts'},
     'surface': {'fuzzy_surface', 'rough_peel', 'speckled_surface', 'glossy_surface'},
+    'part': {'peel_like', 'flesh_like', 'cut_surface', 'seed_like', 'core_like', 'segment_like', 'rind_like'},
     'quality': {'clear_foreground', 'background_interference'},
     'text': {'text_like', 'character_parts'},
     'sign': {'sign_like', 'arrow_like', 'prohibition_like'},
@@ -218,6 +219,8 @@ class PrototypeModel:
             return _vector_similarity(a, b, scale=5.2)
         if name == 'surface_mark':
             return _vector_similarity(a, b, scale=5.0)
+        if name == 'fruit_part':
+            return _vector_similarity(a, b, scale=5.1)
         if name == 'text_mark':
             return _vector_similarity(a, b, scale=5.0)
         if name == 'sign_symbol':

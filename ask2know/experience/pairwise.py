@@ -9,6 +9,7 @@ FEATURE_TO_QUESTION = {
     'texture': 'Q_TEXTURE_IMPORTANCE',
     'cluster': 'Q_TEXTURE_IMPORTANCE',
     'surface': 'Q_SURFACE_IMPORTANCE',
+    'part': 'Q_PART_IMPORTANCE',
     'text': 'Q_TEXT_IMPORTANCE',
     'sign': 'Q_SIGN_IMPORTANCE',
     'quality': 'Q_SAMPLE_QUALITY',
@@ -22,6 +23,7 @@ REASON_TO_FEATURES = {
     'texture': ['texture'],
     'cluster': ['texture', 'shape'],
     'surface': ['surface'],
+    'part': ['part'],
     'text': ['text'],
     'sign': ['sign'],
     'background': [],
@@ -36,6 +38,7 @@ REASON_TO_CONCEPTS = {
     'texture': ['smooth_surface', 'texture_rich', 'edge_rich'],
     'cluster': ['single_object', 'cluster_like', 'repeated_parts'],
     'surface': ['fuzzy_surface', 'rough_peel', 'speckled_surface', 'glossy_surface'],
+    'part': ['peel_like', 'flesh_like', 'cut_surface', 'seed_like', 'core_like', 'segment_like', 'rind_like'],
     'text': ['text_like', 'character_parts'],
     'sign': ['sign_like', 'arrow_like', 'prohibition_like'],
     'background': ['background_interference', 'clear_foreground'],
@@ -110,7 +113,7 @@ def pair_key(a, b):
 
 
 class PairwiseExperienceManager:
-    def __init__(self, metadata_dir=None, path=None, version='0.3.7.2'):
+    def __init__(self, metadata_dir=None, path=None, version='0.3.7.3'):
         self.version = version
         if path is not None:
             self.path = Path(path)
@@ -245,6 +248,8 @@ class PairwiseExperienceManager:
                 return '请重点观察当前图片的整体形状、长宽比例、圆润程度或弯曲程度。'
             if top == 'texture':
                 return '请重点观察当前图片的表面纹理、颗粒感、局部重复结构。'
+            if top == 'part':
+                return '请重点观察当前图片是否出现果皮、果肉、籽点、果核、切面或瓣状结构。'
         return ''
 
     def correction_options(self, predicted, true_label):
@@ -259,10 +264,11 @@ class PairwiseExperienceManager:
             ('C', 'texture', texture_hint, {'increase': ['texture'], 'decrease': []}),
             ('D', 'cluster', cluster_hint, {'increase': ['texture', 'shape'], 'decrease': []}),
             ('E', 'surface', '表面绒毛、粗糙皮、斑点/籽点或反光不同。', {'increase': ['surface'], 'decrease': []}),
-            ('F', 'text', '文字、数字或字符笔画区域不同。', {'increase': ['text'], 'decrease': []}),
-            ('G', 'sign', '箭头、禁止符号、方向性结构或标识图案不同。', {'increase': ['sign'], 'decrease': []}),
-            ('H', 'background', '背景、光线、遮挡或主体不清楚影响了判断。', {'increase': [], 'decrease': ['color', 'texture', 'surface', 'text', 'sign']}),
-            ('I', 'other', '不确定 / 其他原因。', {'increase': [], 'decrease': []}),
+            ('F', 'part', '果皮、果肉、籽点、果核、切面或瓣状结构不同。', {'increase': ['part'], 'decrease': []}),
+            ('G', 'text', '文字、数字或字符笔画区域不同。', {'increase': ['text'], 'decrease': []}),
+            ('H', 'sign', '箭头、禁止符号、方向性结构或标识图案不同。', {'increase': ['sign'], 'decrease': []}),
+            ('I', 'background', '背景、光线、遮挡或主体不清楚影响了判断。', {'increase': [], 'decrease': ['color', 'texture', 'surface', 'part', 'text', 'sign']}),
+            ('J', 'other', '不确定 / 其他原因。', {'increase': [], 'decrease': []}),
         ]
 
     def export(self):

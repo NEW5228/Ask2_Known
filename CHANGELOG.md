@@ -1,3 +1,14 @@
+# a2k_v0.3.7.3 更新日志
+
+## v0.3.7.3 新增/调整
+
+- 新增用户可选特征组：`part`，用于果皮、果肉、籽点、果核、切面、瓣状结构和厚皮/瓜皮感。
+- 新增内部特征：`fruit_part`，继续使用 OpenCV / NumPy 轻量规则，帮助处理切开水果和带明显内部结构的样本。
+- fruit 新建任务默认启用 `part`；general 和 traffic_sign 默认不启用 `part`，避免非水果任务概念污染。
+- 新增概念：`peel_like`、`flesh_like`、`cut_surface`、`seed_like`、`core_like`、`segment_like`、`rind_like`。
+- 新增 `Q_PART_IMPORTANCE`，纠错追问支持选择果皮/果肉/籽/切面等部位原因。
+- 修复 v0.3.7.2 默认特征边界：`surface` 仍可用于通用任务，`part` 仅作为水果任务默认启用。
+
 # a2k_v0.3.7.2 更新日志
 
 ## v0.3.7.2 新增/调整

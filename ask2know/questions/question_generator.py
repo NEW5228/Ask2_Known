@@ -136,6 +136,8 @@ def generate_natural_question(top_a, top_b, question, weights, sample_path=None,
         question_text = intro + '请你帮我确认：这里的纹理、颗粒感、重复结构或局部图案，是否是区分类别的关键？'
     elif qid == 'Q_SURFACE_IMPORTANCE':
         question_text = intro + '请你帮我确认：这里的表面绒毛、粗糙皮、斑点/籽点或反光，是否是区分类别的关键？'
+    elif qid == 'Q_PART_IMPORTANCE':
+        question_text = intro + '请你帮我确认：这里的果皮、果肉、籽点、果核、切面或瓣状结构，是否是区分类别的关键？'
     elif qid == 'Q_TEXT_IMPORTANCE':
         question_text = intro + '请你帮我确认：这里的文字、数字或字符笔画区域，是否是区分类别的关键？'
     elif qid == 'Q_SIGN_IMPORTANCE':

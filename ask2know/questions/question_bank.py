@@ -59,6 +59,18 @@ QUESTION_BANK = [
         ]
     },
     {
+        'id': 'Q_PART_IMPORTANCE',
+        'feature': 'part',
+        'kind': 'feature_importance',
+        'template': '{a} 和 {b} 是否主要通过果皮、果肉、籽、果核或切面结构区分？',
+        'options': [
+            ('A', '果皮/果肉/籽/切面差异明显，部位特征很重要', {'increase': ['part'], 'decrease': []}),
+            ('B', '部位结构不稳定，不能主要靠这类特征', {'increase': [], 'decrease': ['part']}),
+            ('C', '当前图片角度/遮挡/未切开，部位特征不可靠', {'increase': [], 'decrease': ['part']}),
+            ('D', '不确定', {'increase': [], 'decrease': []}),
+        ]
+    },
+    {
         'id': 'Q_TEXT_IMPORTANCE',
         'feature': 'text',
         'kind': 'feature_importance',
@@ -88,8 +100,8 @@ QUESTION_BANK = [
         'kind': 'sample_quality',
         'template': '这张图片是否适合作为学习样本？',
         'options': [
-            ('A', '适合，主体清晰，背景干扰少', {'increase': ['texture', 'surface', 'shape'], 'decrease': []}),
-            ('B', '不适合，太糊/遮挡/主体不明显', {'increase': [], 'decrease': ['texture', 'surface', 'shape']}),
+            ('A', '适合，主体清晰，背景干扰少', {'increase': ['texture', 'surface', 'part', 'shape'], 'decrease': []}),
+            ('B', '不适合，太糊/遮挡/主体不明显', {'increase': [], 'decrease': ['texture', 'surface', 'part', 'shape']}),
             ('C', '可以判断，但不要加入正式样本库', {'increase': [], 'decrease': []}),
             ('D', '不确定', {'increase': [], 'decrease': []}),
         ]

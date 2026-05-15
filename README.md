@@ -1,6 +1,6 @@
 # Ask2Know
 
-Ask2Know 是一个面向个人和小团队的低样本主动教学训练框架。v0.3.7.2 在水果细化特征基础上加入训练结束后的类别理解总结，并新增轻量 `surface`、`text`、`sign` 特征组，让系统可以初步表达“偏棕、接近圆形、有绒毛感、表面粗糙、有文字/数字感、像箭头/禁止标识”等可复用概念。
+Ask2Know 是一个面向个人和小团队的低样本主动教学训练框架。v0.3.7.3 在水果细化特征基础上新增轻量 `part` 特征组，让系统可以初步表达“有果皮感、有果肉感、切面明显、有籽点、有果核/中心结构、有瓣状结构、有厚皮/瓜皮感”等更接近真实水果观察的概念。
 
 ## 安装
 
@@ -19,7 +19,7 @@ python scripts\init_task.py --name fruit_test3 --classes apple banana pear grape
 可以在创建任务时选择特征预设和用户可见特征：
 
 ```bat
-python scripts\init_task.py --name fruit_test3 --classes apple banana pear --output D:\a2k_test --feature-preset fruit --features color shape texture surface size
+python scripts\init_task.py --name fruit_test3 --classes apple banana pear --output D:\a2k_test --feature-preset fruit --features color shape texture surface part size
 ```
 
 交通标识类任务可以启用文字和标识特征：
@@ -28,7 +28,7 @@ python scripts\init_task.py --name fruit_test3 --classes apple banana pear --out
 python scripts\init_task.py --name sign_test --classes stop turn_left no_entry --output D:\a2k_test --feature-preset traffic_sign --features color shape text sign
 ```
 
-用户可选特征包括 `color`、`shape`、`texture`、`surface`、`size`、`text`、`sign`。`surface` 用来描述绒毛、粗糙表皮、斑点/籽点和反光感。`quality` 是系统内部的样本质量检查，用来判断主体是否清晰、背景是否干扰，不作为用户选择的训练特征展示。`surface`、`text` 和 `sign` 是轻量 OpenCV 模拟特征，不做真实 OCR、语义分割或完整目标检测。
+用户可选特征包括 `color`、`shape`、`texture`、`surface`、`part`、`size`、`text`、`sign`。`surface` 用来描述绒毛、粗糙表皮、斑点/籽点和反光感；`part` 用来描述果皮、果肉、籽点、果核、切面、瓣状结构和厚皮/瓜皮感。`quality` 是系统内部的样本质量检查，用来判断主体是否清晰、背景是否干扰，不作为用户选择的训练特征展示。`surface`、`part`、`text` 和 `sign` 是轻量 OpenCV 模拟特征，不做真实 OCR、语义分割或完整目标检测。
 
 ## 运行内置 demo
 
@@ -82,8 +82,10 @@ A. 颜色或色系差异明显
 B. 整体形状、结构或轮廓不同
 C. 表面纹理、颗粒感或局部重复结构不同
 D. 单体/聚集结构不同
-E. 背景、光线、遮挡影响
-F. 不确定 / 其他原因
+E. 表面绒毛、粗糙皮、斑点/籽点或反光不同
+F. 果皮、果肉、籽点、果核、切面或瓣状结构不同
+G. 背景、光线、遮挡影响
+H. 不确定 / 其他原因
 ```
 
 可以输入：

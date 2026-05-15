@@ -19,6 +19,7 @@ features:
     shape: true
     texture: true
     surface: true
+    part: true
     size: true
     text: false
     sign: false
@@ -35,6 +36,7 @@ learning:
     shape: 0.32
     texture: 0.25
     surface: 0.16
+    part: 0.12
     size: 0.05
   default_feature_weight: 0.08
   update_step: 0.07

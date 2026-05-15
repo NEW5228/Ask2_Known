@@ -1,4 +1,4 @@
-USER_FEATURE_GROUPS = ('color', 'shape', 'texture', 'surface', 'size', 'text', 'sign')
+USER_FEATURE_GROUPS = ('color', 'shape', 'texture', 'surface', 'part', 'size', 'text', 'sign')
 DEFAULT_USER_FEATURE_GROUPS = ('color', 'shape', 'texture', 'surface', 'size')
 SYSTEM_FEATURES = ('quality',)
 
@@ -20,6 +20,7 @@ PRESET_FEATURES = {
         'shape': ['contour'],
         'texture': ['texture'],
         'surface': ['surface_mark'],
+        'part': ['fruit_part'],
         'size': ['size'],
         'text': ['text_mark'],
         'sign': ['sign_symbol'],
@@ -29,6 +30,7 @@ PRESET_FEATURES = {
         'shape': ['contour', 'fruit_shape', 'fruit_structure'],
         'texture': ['texture', 'fruit_texture'],
         'surface': ['surface_mark'],
+        'part': ['fruit_part'],
         'size': ['size'],
         'text': ['text_mark'],
         'sign': ['sign_symbol'],
@@ -38,6 +40,7 @@ PRESET_FEATURES = {
         'shape': ['contour'],
         'texture': ['texture'],
         'surface': ['surface_mark'],
+        'part': ['fruit_part'],
         'size': ['size'],
         'text': ['text_mark'],
         'sign': ['sign_symbol'],
@@ -49,6 +52,7 @@ DEFAULT_GROUP_WEIGHTS = {
     'shape': 0.32,
     'texture': 0.25,
     'surface': 0.16,
+    'part': 0.12,
     'size': 0.05,
     'text': 0.18,
     'sign': 0.28,
@@ -56,7 +60,7 @@ DEFAULT_GROUP_WEIGHTS = {
 
 PRESET_DEFAULT_GROUPS = {
     'general': ('color', 'shape', 'texture', 'surface', 'size'),
-    'fruit': ('color', 'shape', 'texture', 'surface', 'size'),
+    'fruit': ('color', 'shape', 'texture', 'surface', 'part', 'size'),
     'traffic_sign': ('color', 'shape', 'text', 'sign'),
 }
 
@@ -82,7 +86,7 @@ def parse_feature_config(cfg, classes=None):
     if not isinstance(raw, dict) or 'groups' not in raw:
         raise ValueError(
             'Unsupported feature config. Use the new format: '
-            'features: {preset: fruit, groups: {color: true, shape: true, texture: true, surface: true, size: true, text: false, sign: false}, '
+            'features: {preset: fruit, groups: {color: true, shape: true, texture: true, surface: true, part: true, size: true, text: false, sign: false}, '
             'system: {quality: true}}.'
         )
 

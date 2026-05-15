@@ -22,7 +22,7 @@ from ask2know.features.feature_config import (
     summarize_group_weights,
 )
 
-VERSION = '0.3.7.2'
+VERSION = '0.3.7.3'
 
 
 def open_image_file(image_path):
@@ -222,7 +222,7 @@ def _parse_multi_choice(text, valid_keys):
 def ask_correction_reason(predicted_label, true_label, pairwise_manager, adaptive_weights, feature_spec, sample_path=None):
     """Ask why a wrong prediction happened and store pairwise experience.
 
-    v0.3.7.2 supports multi-select answers because real differences often involve
+    v0.3.7.3 supports multi-select answers because real differences often involve
     color + shape + texture together.
     """
     if not predicted_label or not true_label or predicted_label == true_label:
@@ -418,6 +418,8 @@ def make_class_understanding_summary(model, objects, pairwise_state=None):
         'blue': 10, 'purple': 10, 'pink': 10, 'brown': 10, 'black': 10,
         'white': 10, 'gray': 10, 'dark': 9, 'bright': 9,
         'round': 8, 'elongated': 8, 'pear_like': 8,
+        'peel_like': 8, 'flesh_like': 8, 'cut_surface': 8, 'seed_like': 8,
+        'core_like': 8, 'segment_like': 8, 'rind_like': 8,
         'fuzzy_surface': 7, 'rough_peel': 7, 'speckled_surface': 7, 'glossy_surface': 7,
         'texture_rich': 6, 'smooth_surface': 6, 'edge_rich': 6,
         'cluster_like': 5, 'repeated_parts': 5, 'single_object': 5,
@@ -523,7 +525,7 @@ def main():
     parser = argparse.ArgumentParser(description='Ask2Know low-sample active teaching demo')
     parser.add_argument('--config', default='configs/fruit_demo.yaml')
     parser.add_argument('--preview', action='store_true', help='手动开启图片预览。默认关闭，避免 Windows 图片查看器占用文件导致卡死')
-    parser.add_argument('--no-preview', action='store_true', help='兼容旧参数；v0.3.7.2 默认就是不预览')
+    parser.add_argument('--no-preview', action='store_true', help='兼容旧参数；v0.3.7.3 默认就是不预览')
     args = parser.parse_args()
 
     cfg = load_yaml(args.config)
