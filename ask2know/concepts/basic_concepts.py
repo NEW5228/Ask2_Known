@@ -24,6 +24,11 @@ CONCEPT_NAMES = [
     'repeated_parts',
     'clear_foreground',
     'background_interference',
+    'text_like',
+    'character_parts',
+    'sign_like',
+    'arrow_like',
+    'prohibition_like',
 ]
 
 DISPLAY_NAMES = {
@@ -48,6 +53,11 @@ DISPLAY_NAMES = {
     'repeated_parts': '有重复结构',
     'clear_foreground': '主体较清晰',
     'background_interference': '背景/主体干扰较强',
+    'text_like': '有文字/数字感',
+    'character_parts': '有字符笔画结构',
+    'sign_like': '有标识符号感',
+    'arrow_like': '像箭头标识',
+    'prohibition_like': '像禁止标识',
 }
 
 
@@ -124,6 +134,19 @@ def concepts_from_features(features):
         area_ok = _clip01(1.0 - abs(area_ratio - 0.42) / 0.42)
         concepts['clear_foreground'] = _clip01(0.45 * area_ok + 0.55 * blur_score)
         concepts['background_interference'] = _clip01(1.0 - area_ok)
+
+    text_mark = _safe_array(features.get('text_mark'))
+    if text_mark.size >= 8:
+        concepts['text_like'] = _clip01(text_mark[0])
+        concepts['character_parts'] = _clip01(
+            0.45 * text_mark[2] + 0.30 * text_mark[3] + 0.25 * max(text_mark[4], text_mark[5])
+        )
+
+    sign_symbol = _safe_array(features.get('sign_symbol'))
+    if sign_symbol.size >= 10:
+        concepts['sign_like'] = _clip01(sign_symbol[0])
+        concepts['arrow_like'] = _clip01(sign_symbol[1])
+        concepts['prohibition_like'] = _clip01(sign_symbol[2])
 
     cluster_signal = _clip01(
         0.45 * concepts['texture_rich']

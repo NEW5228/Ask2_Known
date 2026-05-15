@@ -47,6 +47,30 @@ QUESTION_BANK = [
         ]
     },
     {
+        'id': 'Q_TEXT_IMPORTANCE',
+        'feature': 'text',
+        'kind': 'feature_importance',
+        'template': '{a} 和 {b} 是否主要通过文字/数字区域区分？',
+        'options': [
+            ('A', '文字/数字差异明显，文字特征很重要', {'increase': ['text'], 'decrease': []}),
+            ('B', '文字/数字不稳定，不能主要靠文字特征', {'increase': [], 'decrease': ['text']}),
+            ('C', '当前图片太糊或太小，文字特征不可靠', {'increase': [], 'decrease': ['text']}),
+            ('D', '不确定', {'increase': [], 'decrease': []}),
+        ]
+    },
+    {
+        'id': 'Q_SIGN_IMPORTANCE',
+        'feature': 'sign',
+        'kind': 'feature_importance',
+        'template': '{a} 和 {b} 是否主要通过箭头/禁止/标识符号区分？',
+        'options': [
+            ('A', '箭头/禁止/符号差异明显，标识特征很重要', {'increase': ['sign'], 'decrease': []}),
+            ('B', '符号差异不稳定，不能主要靠标识特征', {'increase': [], 'decrease': ['sign']}),
+            ('C', '当前图片角度/遮挡影响标识判断', {'increase': [], 'decrease': ['sign']}),
+            ('D', '不确定', {'increase': [], 'decrease': []}),
+        ]
+    },
+    {
         'id': 'Q_SAMPLE_QUALITY',
         'feature': 'quality',
         'kind': 'sample_quality',

@@ -19,6 +19,8 @@ features:
     shape: true
     texture: true
     size: true
+    text: false
+    sign: false
   system:
     quality: true
 

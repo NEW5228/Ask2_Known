@@ -186,6 +186,10 @@ class PrototypeModel:
             return _vector_similarity(a, b, scale=4.8)
         if name == 'fruit_structure':
             return _vector_similarity(a, b, scale=5.2)
+        if name == 'text_mark':
+            return _vector_similarity(a, b, scale=5.0)
+        if name == 'sign_symbol':
+            return _vector_similarity(a, b, scale=5.4)
         return _vector_similarity(a, b, scale=2.5)
 
     def _group_detail(self, detail):

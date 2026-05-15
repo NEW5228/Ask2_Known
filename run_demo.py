@@ -14,6 +14,7 @@ from ask2know.learning.weights import AdaptiveWeights
 from ask2know.learning.feedback_updater import apply_answer_to_weights, update_question_reward
 from ask2know.sample_pool.manager import SamplePoolManager
 from ask2know.experience.pairwise import PairwiseExperienceManager
+from ask2know.concepts.basic_concepts import DISPLAY_NAMES, summarize_concepts
 from ask2know.features.feature_config import (
     expand_feature_adjustments,
     initial_feature_weights,
@@ -21,7 +22,7 @@ from ask2know.features.feature_config import (
     summarize_group_weights,
 )
 
-VERSION = '0.3.7'
+VERSION = '0.3.7.1'
 
 
 def open_image_file(image_path):
@@ -221,7 +222,7 @@ def _parse_multi_choice(text, valid_keys):
 def ask_correction_reason(predicted_label, true_label, pairwise_manager, adaptive_weights, feature_spec, sample_path=None):
     """Ask why a wrong prediction happened and store pairwise experience.
 
-    v0.3.7 supports multi-select answers because real differences often involve
+    v0.3.7.1 supports multi-select answers because real differences often involve
     color + shape + texture together.
     """
     if not predicted_label or not true_label or predicted_label == true_label:
@@ -241,7 +242,10 @@ def ask_correction_reason(predicted_label, true_label, pairwise_manager, adaptiv
     ans = input('请输入选项，可多选，例如 A,B 或 ABC；直接回车表示不确定: ').strip().upper()
     selected_keys = _parse_multi_choice(ans, set(option_map.keys()))
     if not selected_keys:
-        selected_keys = ['F'] if 'F' in option_map else list(option_map.keys())[-1:]
+        selected_keys = [
+            key for key, (reason_id, _, _) in option_map.items()
+            if reason_id == 'other'
+        ] or list(option_map.keys())[-1:]
 
     selected_items = []
     inc = []
@@ -404,11 +408,102 @@ def make_experience_summary(pairwise_state, objects):
                 summary['classes'][cls]['possible_useful_concepts'][concept] = cur + int(count)
     return summary
 
+
+def make_class_understanding_summary(model, objects, pairwise_state=None):
+    """Summarize what the current concept prototypes say about each class."""
+    diagnostic_concepts = {'clear_foreground', 'background_interference'}
+    labels = [o.get('name') for o in objects]
+    concept_prototypes = getattr(model, 'concept_prototypes', {}) or {}
+    concept_counts = getattr(model, 'concept_counts', {}) or {}
+    pairs = (pairwise_state or {}).get('pairs', {})
+    summary = {
+        'schema_version': VERSION,
+        'summary_type': 'class_understanding_summary',
+        'notice': '这是系统根据当前训练样本和已确认样本自动生成的类别理解草稿，供用户检查，不代表最终真理。',
+        'classes': {}
+    }
+
+    for label in labels:
+        concepts = concept_prototypes.get(label, {}) or {}
+        raw_strong = summarize_concepts(concepts, top_n=12, min_score=0.35)
+        strong = [item for item in raw_strong if item['id'] not in diagnostic_concepts][:8]
+        weak = [
+            {
+                'id': name,
+                'name': DISPLAY_NAMES.get(name, name),
+                'score': round(float(score), 3),
+            }
+            for name, score in sorted(concepts.items(), key=lambda x: float(x[1]), reverse=True)
+            if name not in diagnostic_concepts and 0.22 <= float(score) < 0.35
+        ][:6]
+        confusion_keys = [
+            key for key, pair in pairs.items()
+            if label in [str(x) for x in pair.get('classes', [])]
+        ]
+        if strong:
+            concept_text = '、'.join([item['name'] for item in strong[:5]])
+            summary_text = f'系统目前认为 {label} 更像：{concept_text}。'
+        else:
+            summary_text = f'系统目前对 {label} 的可解释概念证据不足，需要更多清晰样本或用户纠正。'
+        needs_check = []
+        if not strong:
+            needs_check.append('这个类别的样本可能太少，或当前浅层特征无法形成稳定概念。')
+        if float(concepts.get('background_interference', 0.0)) >= 0.35:
+            needs_check.append('请检查该类别是否被背景、光线、遮挡或主体清晰度影响。')
+        if weak:
+            needs_check.append('低置信概念需要用户复核：' + '、'.join([item['name'] for item in weak[:4]]) + '。')
+        if confusion_keys:
+            needs_check.append('该类别存在已记录混淆，可结合类别对经验一起检查。')
+
+        summary['classes'][label] = {
+            'summary_text': summary_text,
+            'strong_concepts': strong,
+            'weak_or_uncertain_concepts': weak,
+            'concept_sample_counts': concept_counts.get(label, {}),
+            'known_confusions': confusion_keys,
+            'needs_user_check': needs_check,
+        }
+    return summary
+
+
+def render_class_understanding_markdown(summary):
+    lines = [
+        '# Ask2Know 类别理解总结',
+        '',
+        summary.get('notice', ''),
+        '',
+    ]
+    for label, item in (summary.get('classes') or {}).items():
+        lines.append(f'## {label}')
+        lines.append('')
+        lines.append(item.get('summary_text', ''))
+        lines.append('')
+        strong = item.get('strong_concepts') or []
+        if strong:
+            lines.append('主要概念：')
+            for concept in strong:
+                lines.append(f'- {concept["name"]}: {concept["score"]:.3f}')
+        else:
+            lines.append('主要概念：暂无稳定概念。')
+        checks = item.get('needs_user_check') or []
+        if checks:
+            lines.append('')
+            lines.append('建议用户检查：')
+            for text in checks:
+                lines.append(f'- {text}')
+        confusions = item.get('known_confusions') or []
+        if confusions:
+            lines.append('')
+            lines.append('已记录混淆：' + '、'.join(confusions))
+        lines.append('')
+    return '\n'.join(lines).rstrip() + '\n'
+
+
 def main():
     parser = argparse.ArgumentParser(description='Ask2Know low-sample active teaching demo')
     parser.add_argument('--config', default='configs/fruit_demo.yaml')
     parser.add_argument('--preview', action='store_true', help='手动开启图片预览。默认关闭，避免 Windows 图片查看器占用文件导致卡死')
-    parser.add_argument('--no-preview', action='store_true', help='兼容旧参数；v0.3.7 默认就是不预览')
+    parser.add_argument('--no-preview', action='store_true', help='兼容旧参数；v0.3.7.1 默认就是不预览')
     args = parser.parse_args()
 
     cfg = load_yaml(args.config)
@@ -650,6 +745,8 @@ def main():
     pairwise_state = pairwise.export()
     report = make_experience_report(cfg, logs, final_weights, question_state, objects, feature_spec, pairwise_state=pairwise_state)
     experience_summary = make_experience_summary(pairwise_state, objects)
+    class_understanding_summary = make_class_understanding_summary(model, objects, pairwise_state=pairwise_state)
+    class_understanding_markdown = render_class_understanding_markdown(class_understanding_summary)
 
     save_json(output_dir / 'feature_weights.json', summarize_group_weights(final_weights, feature_spec))
     save_json(output_dir / 'internal_feature_weights.json', final_weights)
@@ -661,6 +758,9 @@ def main():
     save_json(output_dir / 'pairwise_experience_runtime.json', pairwise_state)
     save_json(output_dir / 'experience_summary.json', experience_summary)
     save_json(pool.metadata_dir / 'experience_summary.json', experience_summary)
+    save_json(output_dir / 'class_understanding_summary.json', class_understanding_summary)
+    (output_dir / 'class_understanding_summary.md').write_text(class_understanding_markdown, encoding='utf-8')
+    save_json(pool.metadata_dir / 'class_understanding_summary.json', class_understanding_summary)
 
     print_header('演示结束')
     print('结果已保存到:', output_dir)
@@ -672,6 +772,8 @@ def main():
     print('运行时类别:', output_dir / 'objects_runtime.json')
     print('类别对经验:', output_dir / 'pairwise_experience_runtime.json')
     print('自我总结:', output_dir / 'experience_summary.json')
+    print('类别理解总结:', output_dir / 'class_understanding_summary.json')
+    print('类别理解文本:', output_dir / 'class_understanding_summary.md')
     if project_root:
         print('样本池:', Path(project_root) / 'sample_pools')
         print('元数据:', Path(project_root) / 'metadata')

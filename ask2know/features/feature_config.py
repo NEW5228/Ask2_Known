@@ -1,4 +1,5 @@
-USER_FEATURE_GROUPS = ('color', 'shape', 'texture', 'size')
+USER_FEATURE_GROUPS = ('color', 'shape', 'texture', 'size', 'text', 'sign')
+DEFAULT_USER_FEATURE_GROUPS = ('color', 'shape', 'texture', 'size')
 SYSTEM_FEATURES = ('quality',)
 
 FRUIT_CLASS_NAMES = {
@@ -7,18 +8,36 @@ FRUIT_CLASS_NAMES = {
     'pineapple', 'plum', 'apricot', 'blueberry', 'raspberry',
 }
 
+TRAFFIC_SIGN_CLASS_NAMES = {
+    'stop', 'no_entry', 'yield', 'speed_limit', 'turn_left', 'turn_right',
+    'straight', 'u_turn', 'no_turn', 'no_parking', 'prohibit', 'forbidden',
+    'warning', 'arrow', 'left_arrow', 'right_arrow', 'traffic_sign',
+}
+
 PRESET_FEATURES = {
     'general': {
         'color': ['color'],
         'shape': ['contour'],
         'texture': ['texture'],
         'size': ['size'],
+        'text': ['text_mark'],
+        'sign': ['sign_symbol'],
     },
     'fruit': {
         'color': ['color', 'fruit_color'],
         'shape': ['contour', 'fruit_shape', 'fruit_structure'],
         'texture': ['texture', 'fruit_texture'],
         'size': ['size'],
+        'text': ['text_mark'],
+        'sign': ['sign_symbol'],
+    },
+    'traffic_sign': {
+        'color': ['color'],
+        'shape': ['contour'],
+        'texture': ['texture'],
+        'size': ['size'],
+        'text': ['text_mark'],
+        'sign': ['sign_symbol'],
     },
 }
 
@@ -27,11 +46,15 @@ DEFAULT_GROUP_WEIGHTS = {
     'shape': 0.32,
     'texture': 0.25,
     'size': 0.05,
+    'text': 0.18,
+    'sign': 0.28,
 }
 
 
 def infer_feature_preset(classes):
     names = {str(name).strip().lower() for name in (classes or [])}
+    if names & TRAFFIC_SIGN_CLASS_NAMES:
+        return 'traffic_sign'
     return 'fruit' if names & FRUIT_CLASS_NAMES else 'general'
 
 
@@ -40,7 +63,7 @@ def resolve_feature_preset(preset, classes=None):
     if preset == 'auto':
         return infer_feature_preset(classes)
     if preset not in PRESET_FEATURES:
-        raise ValueError(f'Unsupported feature preset: {preset}. Use auto, general, or fruit.')
+        raise ValueError(f'Unsupported feature preset: {preset}. Use auto, general, fruit, or traffic_sign.')
     return preset
 
 
@@ -49,7 +72,7 @@ def parse_feature_config(cfg, classes=None):
     if not isinstance(raw, dict) or 'groups' not in raw:
         raise ValueError(
             'Unsupported feature config. Use the new format: '
-            'features: {preset: fruit, groups: {color: true, shape: true, texture: true, size: true}, '
+            'features: {preset: fruit, groups: {color: true, shape: true, texture: true, size: true, text: false, sign: false}, '
             'system: {quality: true}}.'
         )
 
@@ -57,7 +80,10 @@ def parse_feature_config(cfg, classes=None):
     groups_raw = raw.get('groups') or {}
     system_raw = raw.get('system') or {}
 
-    groups = {name: bool(groups_raw.get(name, True)) for name in USER_FEATURE_GROUPS}
+    groups = {
+        name: bool(groups_raw.get(name, name in DEFAULT_USER_FEATURE_GROUPS))
+        for name in USER_FEATURE_GROUPS
+    }
     system = {name: bool(system_raw.get(name, True)) for name in SYSTEM_FEATURES}
 
     group_features = {}

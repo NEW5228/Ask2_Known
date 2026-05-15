@@ -1,6 +1,6 @@
 # Ask2Know
 
-Ask2Know 是一个面向个人和小团队的低样本主动教学训练框架。v0.3.7 加入水果优先的细化特征和用户可选特征组，让系统在浅层特征之外初步理解“偏红、接近圆形、长条形、表面平滑、聚集感、主体清晰”等可复用概念。
+Ask2Know 是一个面向个人和小团队的低样本主动教学训练框架。v0.3.7.1 在水果细化特征基础上加入训练结束后的类别理解总结，并新增轻量 `text` / `sign` 特征组，让系统可以初步表达“偏红、接近圆形、长条形、表面平滑、有文字/数字感、像箭头/禁止标识”等可复用概念。
 
 ## 安装
 
@@ -22,7 +22,13 @@ python scripts\init_task.py --name fruit_test3 --classes apple banana pear grape
 python scripts\init_task.py --name fruit_test3 --classes apple banana pear --output D:\a2k_test --feature-preset fruit --features color shape texture size
 ```
 
-用户可选特征只有 `color`、`shape`、`texture`、`size`。`quality` 是系统内部的样本质量检查，用来判断主体是否清晰、背景是否干扰，不作为用户选择的训练特征展示。
+交通标识类任务可以启用文字和标识特征：
+
+```bat
+python scripts\init_task.py --name sign_test --classes stop turn_left no_entry --output D:\a2k_test --feature-preset traffic_sign --features color shape text sign
+```
+
+用户可选特征包括 `color`、`shape`、`texture`、`size`、`text`、`sign`。`quality` 是系统内部的样本质量检查，用来判断主体是否清晰、背景是否干扰，不作为用户选择的训练特征展示。`text` 和 `sign` 是轻量 OpenCV 模拟特征，不做真实 OCR 或完整目标检测。
 
 ## 运行内置 demo
 
@@ -99,9 +105,12 @@ ABD
 ```text
 outputs/experience_summary.json
 metadata/experience_summary.json
+outputs/class_understanding_summary.json
+outputs/class_understanding_summary.md
 ```
 
 这是系统根据错误经验和基础视觉概念形成的弱总结，不是最终真理，但会帮助后续问题生成、概念层设计和经验迁移。
+其中 `class_understanding_summary.md` 面向人工检查，会按类别输出“系统目前认为这个类别更像什么”。
 
 ## 基础视觉概念层
 

@@ -134,6 +134,10 @@ def generate_natural_question(top_a, top_b, question, weights, sample_path=None,
         question_text = intro + '请你帮我确认：当前主体的整体形状概念，比如圆形、长条形、上窄下宽，是否比颜色更能区分？'
     elif qid == 'Q_TEXTURE_IMPORTANCE':
         question_text = intro + '请你帮我确认：这里的纹理、颗粒感、重复结构或局部图案，是否是区分类别的关键？'
+    elif qid == 'Q_TEXT_IMPORTANCE':
+        question_text = intro + '请你帮我确认：这里的文字、数字或字符笔画区域，是否是区分类别的关键？'
+    elif qid == 'Q_SIGN_IMPORTANCE':
+        question_text = intro + '请你帮我确认：这里的箭头、禁止符号、方向性结构或标识图案，是否是区分类别的关键？'
     elif qid == 'Q_SAMPLE_QUALITY':
         question_text = intro + '如果你觉得系统候选明显不靠谱，请优先考虑当前图片是否主体清晰、背景是否干扰。'
     else:

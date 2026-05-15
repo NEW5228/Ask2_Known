@@ -350,6 +350,147 @@ def fruit_structure_feature(img, mask):
     ], dtype=np.float32)
 
 
+def text_mark_feature(img, mask):
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    masked_area = max(1.0, float(cv2.countNonZero(mask)))
+    edges = cv2.Canny(gray, 55, 155)
+    edge_mask = cv2.bitwise_and(edges, edges, mask=mask)
+    edge_density = float(cv2.countNonZero(edge_mask)) / masked_area
+
+    _, binary_dark = cv2.threshold(gray, 115, 255, cv2.THRESH_BINARY_INV)
+    binary_dark = cv2.bitwise_and(binary_dark, binary_dark, mask=mask)
+    kernel = np.ones((2, 2), np.uint8)
+    binary_dark = cv2.morphologyEx(binary_dark, cv2.MORPH_OPEN, kernel)
+    component_count, _, stats, _ = cv2.connectedComponentsWithStats(binary_dark, 8)
+    small_components = 0
+    medium_components = 0
+    total_dark_area = 0.0
+    for idx in range(1, component_count):
+        area = float(stats[idx, cv2.CC_STAT_AREA])
+        if area < 3 or area > masked_area * 0.18:
+            continue
+        total_dark_area += area
+        if area <= masked_area * 0.018:
+            small_components += 1
+        else:
+            medium_components += 1
+
+    h_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9, 1))
+    v_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 9))
+    horizontal = cv2.morphologyEx(binary_dark, cv2.MORPH_OPEN, h_kernel)
+    vertical = cv2.morphologyEx(binary_dark, cv2.MORPH_OPEN, v_kernel)
+    horizontal_density = float(cv2.countNonZero(horizontal)) / masked_area
+    vertical_density = float(cv2.countNonZero(vertical)) / masked_area
+
+    ys, xs = np.where(binary_dark > 0)
+    if xs.size:
+        x_spread = min(float(xs.std()) / max(1.0, float(mask.shape[1]) * 0.22), 1.0)
+        y_spread = min(float(ys.std()) / max(1.0, float(mask.shape[0]) * 0.18), 1.0)
+    else:
+        x_spread = y_spread = 0.0
+    stroke_balance = 1.0 - min(abs(horizontal_density - vertical_density) / max(horizontal_density + vertical_density, 1e-6), 1.0)
+    text_like = min(
+        0.30 * min(edge_density * 5.0, 1.0)
+        + 0.25 * min((small_components + medium_components) / 18.0, 1.0)
+        + 0.20 * min(total_dark_area / max(masked_area * 0.18, 1.0), 1.0)
+        + 0.15 * stroke_balance
+        + 0.10 * min(x_spread + y_spread, 1.0),
+        1.0,
+    )
+    return np.array([
+        text_like,
+        min(edge_density * 5.0, 1.0),
+        min(small_components / 16.0, 1.0),
+        min(medium_components / 8.0, 1.0),
+        min(horizontal_density * 8.0, 1.0),
+        min(vertical_density * 8.0, 1.0),
+        x_spread,
+        y_spread,
+    ], dtype=np.float32)
+
+
+def sign_symbol_feature(img, mask):
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    masked_area = max(1.0, float(cv2.countNonZero(mask)))
+    pixels = hsv[mask > 0]
+    if pixels.size == 0:
+        return np.zeros(10, dtype=np.float32)
+
+    h = pixels[:, 0]
+    s = pixels[:, 1]
+    v = pixels[:, 2]
+    red_ratio = (((h < 10) | (h > 165)) & (s > 70) & (v > 50)).sum() / max(1, pixels.shape[0])
+    blue_ratio = ((h >= 85) & (h < 125) & (s > 70) & (v > 50)).sum() / max(1, pixels.shape[0])
+    high_contrast = ((s > 65) & ((v < 90) | (v > 180))).sum() / max(1, pixels.shape[0])
+
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if contours:
+        c = max(contours, key=cv2.contourArea)
+        area = max(1.0, cv2.contourArea(c))
+        peri = max(1.0, cv2.arcLength(c, True))
+        circularity = min(4 * np.pi * area / (peri * peri + 1e-6), 1.0)
+        x, y, w, h_box = cv2.boundingRect(c)
+        aspect = float(w) / max(1.0, float(h_box))
+        aspect_balance = 1.0 - min(abs(np.log(max(aspect, 1e-6))) / np.log(3.0), 1.0)
+        circle_like = min(circularity * aspect_balance, 1.0)
+    else:
+        circle_like = 0.0
+
+    edges = cv2.Canny(gray, 45, 135)
+    edge_mask = cv2.bitwise_and(edges, edges, mask=mask)
+    lines = cv2.HoughLinesP(edge_mask, 1, np.pi / 180, threshold=22, minLineLength=18, maxLineGap=5)
+    horizontal = vertical = diag_pos = diag_neg = 0.0
+    total_len = 0.0
+    if lines is not None:
+        for line in lines[:, 0, :]:
+            x1, y1, x2, y2 = [float(x) for x in line]
+            dx = x2 - x1
+            dy = y2 - y1
+            length = max(1.0, float(np.hypot(dx, dy)))
+            angle = abs(float(np.degrees(np.arctan2(dy, dx))))
+            total_len += length
+            if angle < 18 or angle > 162:
+                horizontal += length
+            elif 72 < angle < 108:
+                vertical += length
+            elif dy * dx >= 0:
+                diag_pos += length
+            else:
+                diag_neg += length
+    if total_len > 0:
+        horizontal /= total_len
+        vertical /= total_len
+        diag_pos /= total_len
+        diag_neg /= total_len
+
+    ys, xs = np.where(mask > 0)
+    if xs.size:
+        cx = float(xs.mean()) / max(1.0, float(mask.shape[1] - 1))
+        cy = float(ys.mean()) / max(1.0, float(mask.shape[0] - 1))
+        directional_bias = min((abs(cx - 0.5) + abs(cy - 0.5)) * 2.0, 1.0)
+    else:
+        directional_bias = 0.0
+
+    diagonal_signal = max(diag_pos, diag_neg)
+    arrow_like = min(0.45 * horizontal + 0.25 * vertical + 0.30 * directional_bias, 1.0)
+    prohibition_like = min(0.45 * red_ratio * 3.0 + 0.35 * circle_like + 0.20 * diagonal_signal, 1.0)
+    sign_like = min(0.30 * high_contrast + 0.25 * max(red_ratio, blue_ratio) * 2.5 + 0.25 * circle_like + 0.20 * max(arrow_like, prohibition_like), 1.0)
+
+    return np.array([
+        sign_like,
+        arrow_like,
+        prohibition_like,
+        min(red_ratio * 3.0, 1.0),
+        min(blue_ratio * 3.0, 1.0),
+        circle_like,
+        horizontal,
+        vertical,
+        diag_pos,
+        diag_neg,
+    ], dtype=np.float32)
+
+
 def extract_features_from_image(img):
     img = cv2.resize(img, (256, 256))
     mask = _main_mask(img)
@@ -364,6 +505,8 @@ def extract_features_from_image(img):
         'fruit_shape': fruit_shape_feature(img, mask),
         'fruit_texture': fruit_texture_feature(img, mask),
         'fruit_structure': fruit_structure_feature(img, mask),
+        'text_mark': text_mark_feature(img, mask),
+        'sign_symbol': sign_symbol_feature(img, mask),
     }
 
 

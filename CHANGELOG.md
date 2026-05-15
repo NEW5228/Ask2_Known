@@ -1,3 +1,15 @@
+# a2k_v0.3.7.1 更新日志
+
+## v0.3.7.1 新增/调整
+
+- 训练结束后新增类别理解总结：`class_understanding_summary.json` 和 `class_understanding_summary.md`。
+- 类别理解总结会输出系统目前认为每个类别具有哪些可解释概念，例如偏红、接近圆形、有文字/数字感、像禁止标识等，方便用户检查。
+- 新增轻量交通标识特征组：`text` 和 `sign`。
+- `text` 用 OpenCV 浅层规则模拟文字/数字区域感，不做真实 OCR。
+- `sign` 用 OpenCV 浅层规则模拟箭头、禁止、方向性符号和标识图案，不做完整目标检测。
+- 新增 `traffic_sign` 特征预设，`auto` 会根据常见交通标识类名尝试启用。
+- `scripts/init_task.py --features` 支持选择 `text` 和 `sign`。
+
 # a2k_v0.3.7 更新日志
 
 ## v0.3.7 新增/调整

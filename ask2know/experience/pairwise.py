@@ -8,6 +8,8 @@ FEATURE_TO_QUESTION = {
     'contour': 'Q_CONTOUR_IMPORTANCE',
     'texture': 'Q_TEXTURE_IMPORTANCE',
     'cluster': 'Q_TEXTURE_IMPORTANCE',
+    'text': 'Q_TEXT_IMPORTANCE',
+    'sign': 'Q_SIGN_IMPORTANCE',
     'quality': 'Q_SAMPLE_QUALITY',
     'background': 'Q_SAMPLE_QUALITY',
     'size': 'Q_SIZE_RELIABILITY',
@@ -18,6 +20,8 @@ REASON_TO_FEATURES = {
     'shape': ['shape'],
     'texture': ['texture'],
     'cluster': ['texture', 'shape'],
+    'text': ['text'],
+    'sign': ['sign'],
     'background': [],
     'quality': [],
     'size': ['size'],
@@ -29,6 +33,8 @@ REASON_TO_CONCEPTS = {
     'shape': ['round', 'elongated', 'pear_like', 'rectangular_like'],
     'texture': ['smooth_surface', 'texture_rich', 'edge_rich'],
     'cluster': ['single_object', 'cluster_like', 'repeated_parts'],
+    'text': ['text_like', 'character_parts'],
+    'sign': ['sign_like', 'arrow_like', 'prohibition_like'],
     'background': ['background_interference', 'clear_foreground'],
     'quality': ['clear_foreground', 'background_interference'],
     'size': [],
@@ -101,7 +107,7 @@ def pair_key(a, b):
 
 
 class PairwiseExperienceManager:
-    def __init__(self, metadata_dir=None, path=None, version='0.3.7'):
+    def __init__(self, metadata_dir=None, path=None, version='0.3.7.1'):
         self.version = version
         if path is not None:
             self.path = Path(path)
@@ -249,8 +255,10 @@ class PairwiseExperienceManager:
             ('B', 'shape', shape_hint, {'increase': ['shape'], 'decrease': []}),
             ('C', 'texture', texture_hint, {'increase': ['texture'], 'decrease': []}),
             ('D', 'cluster', cluster_hint, {'increase': ['texture', 'shape'], 'decrease': []}),
-            ('E', 'background', '背景、光线、遮挡或主体不清楚影响了判断。', {'increase': [], 'decrease': ['color', 'texture']}),
-            ('F', 'other', '不确定 / 其他原因。', {'increase': [], 'decrease': []}),
+            ('E', 'text', '文字、数字或字符笔画区域不同。', {'increase': ['text'], 'decrease': []}),
+            ('F', 'sign', '箭头、禁止符号、方向性结构或标识图案不同。', {'increase': ['sign'], 'decrease': []}),
+            ('G', 'background', '背景、光线、遮挡或主体不清楚影响了判断。', {'increase': [], 'decrease': ['color', 'texture', 'text', 'sign']}),
+            ('H', 'other', '不确定 / 其他原因。', {'increase': [], 'decrease': []}),
         ]
 
     def export(self):
