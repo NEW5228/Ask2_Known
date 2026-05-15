@@ -53,7 +53,7 @@ def color_feature(img, mask):
     pixels = hsv[mask > 0]
     if pixels.size == 0:
         stats = np.zeros(6, dtype=np.float32)
-        color_bins = np.zeros(8, dtype=np.float32)
+        color_bins = np.zeros(14, dtype=np.float32)
     else:
         mean = pixels.mean(axis=0) / np.array([180.0, 255.0, 255.0])
         std = pixels.std(axis=0) / np.array([180.0, 255.0, 255.0])
@@ -65,15 +65,24 @@ def color_feature(img, mask):
         hv = h[valid]
         total = max(1, hv.size)
         # coarse semantic color ratios; still generic, not fruit-specific.
-        red = ((hv < 10) | (hv > 165)).sum() / total
+        red = ((hv < 10) | (hv > 168)).sum() / total
         orange = ((hv >= 10) & (hv < 25)).sum() / total
         yellow = ((hv >= 25) & (hv < 38)).sum() / total
-        green = ((hv >= 38) & (hv < 85)).sum() / total
-        blue = ((hv >= 85) & (hv < 125)).sum() / total
-        purple = ((hv >= 125) & (hv < 165)).sum() / total
+        green = ((hv >= 38) & (hv < 82)).sum() / total
+        cyan = ((hv >= 82) & (hv < 100)).sum() / total
+        blue = ((hv >= 100) & (hv < 125)).sum() / total
+        purple = ((hv >= 125) & (hv < 155)).sum() / total
+        pink = ((hv >= 155) & (hv <= 168)).sum() / total
+        brown = ((h >= 5) & (h < 30) & (s > 35) & (v >= 45) & (v < 150)).sum() / max(1, pixels.shape[0])
+        black = ((pixels[:, 2] < 65) & (pixels[:, 1] < 170)).sum() / max(1, pixels.shape[0])
+        white = ((pixels[:, 2] > 205) & (pixels[:, 1] < 45)).sum() / max(1, pixels.shape[0])
+        gray = ((pixels[:, 2] >= 65) & (pixels[:, 2] <= 205) & (pixels[:, 1] < 45)).sum() / max(1, pixels.shape[0])
         dark = ((pixels[:, 2] < 90) & (pixels[:, 1] > 30)).sum() / max(1, pixels.shape[0])
         bright = ((pixels[:, 2] > 180) & (pixels[:, 1] > 30)).sum() / max(1, pixels.shape[0])
-        color_bins = np.array([red, orange, yellow, green, blue, purple, dark, bright], dtype=np.float32)
+        color_bins = np.array([
+            red, orange, yellow, green, cyan, blue, purple, pink,
+            brown, black, white, gray, dark, bright
+        ], dtype=np.float32)
     return np.concatenate([hist, stats, color_bins]).astype(np.float32)
 
 
@@ -165,7 +174,7 @@ def fruit_color_feature(img, mask):
     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
     pixels = hsv[mask > 0]
     if pixels.size == 0:
-        return np.zeros(13, dtype=np.float32)
+        return np.zeros(19, dtype=np.float32)
 
     h = pixels[:, 0]
     s = pixels[:, 1]
@@ -174,15 +183,21 @@ def fruit_color_feature(img, mask):
     hv = h[valid]
     total = max(1, hv.size)
 
-    red = ((hv < 10) | (hv > 165)).sum() / total
+    red = ((hv < 10) | (hv > 168)).sum() / total
     orange = ((hv >= 10) & (hv < 25)).sum() / total
     yellow = ((hv >= 25) & (hv < 38)).sum() / total
-    green = ((hv >= 38) & (hv < 85)).sum() / total
-    purple = ((hv >= 125) & (hv < 165)).sum() / total
+    green = ((hv >= 38) & (hv < 82)).sum() / total
+    cyan = ((hv >= 82) & (hv < 100)).sum() / total
+    blue = ((hv >= 100) & (hv < 125)).sum() / total
+    purple = ((hv >= 125) & (hv < 155)).sum() / total
+    pink = ((hv >= 155) & (hv <= 168)).sum() / total
     brown_dark = ((h >= 5) & (h < 28) & (s > 50) & (v < 130)).sum() / max(1, pixels.shape[0])
+    black = ((v < 65) & (s < 170)).sum() / max(1, pixels.shape[0])
+    white = ((v > 205) & (s < 45)).sum() / max(1, pixels.shape[0])
+    gray = ((v >= 65) & (v <= 205) & (s < 45)).sum() / max(1, pixels.shape[0])
     bright_patch = ((v > 205) & (s > 25)).sum() / max(1, pixels.shape[0])
     high_sat = (s > 110).sum() / max(1, pixels.shape[0])
-    color_bins = np.array([red, orange, yellow, green, purple], dtype=np.float32)
+    color_bins = np.array([red, orange, yellow, green, cyan, blue, purple, pink, brown_dark, black, white, gray], dtype=np.float32)
     dominance = float(color_bins.max()) if color_bins.size else 0.0
     stats = np.array([
         float(s.mean()) / 255.0,
@@ -192,7 +207,7 @@ def fruit_color_feature(img, mask):
     ], dtype=np.float32)
     return np.concatenate([
         color_bins,
-        np.array([brown_dark, bright_patch, high_sat, dominance], dtype=np.float32),
+        np.array([bright_patch, high_sat, dominance], dtype=np.float32),
         stats,
     ]).astype(np.float32)
 
@@ -347,6 +362,63 @@ def fruit_structure_feature(img, mask):
         min(edge_density * 2.8, 1.0),
         single_object,
         min(solidity, 1.0),
+    ], dtype=np.float32)
+
+
+def surface_mark_feature(img, mask):
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    vals = gray[mask > 0]
+    pixels = hsv[mask > 0]
+    if vals.size == 0 or pixels.size == 0:
+        return np.zeros(10, dtype=np.float32)
+
+    masked_area = max(1.0, float(cv2.countNonZero(mask)))
+    edges = cv2.Canny(gray, 35, 120)
+    edge_density = float(cv2.countNonZero(cv2.bitwise_and(edges, edges, mask=mask))) / masked_area
+    lap = cv2.Laplacian(gray, cv2.CV_64F)
+    lap_vals = lap[mask > 0]
+    lap_var = min(float(lap_vals.var()) / 1300.0, 1.0) if lap_vals.size else 0.0
+    local_mean = cv2.blur(gray, (7, 7))
+    local_delta = cv2.absdiff(gray, local_mean)
+    local_contrast = min(float(local_delta[mask > 0].mean()) / 42.0, 1.0)
+
+    h = pixels[:, 0]
+    s = pixels[:, 1]
+    v = pixels[:, 2]
+    brown_hair = ((h >= 5) & (h < 35) & (s > 30) & (v > 35) & (v < 160)).sum() / max(1, pixels.shape[0])
+    dark_hair = ((v < 100) & (s > 20)).sum() / max(1, pixels.shape[0])
+    bright_patch = ((v > 210) & (s < 90)).sum() / max(1, pixels.shape[0])
+
+    _, dark = cv2.threshold(gray, 105, 255, cv2.THRESH_BINARY_INV)
+    dark = cv2.bitwise_and(dark, dark, mask=mask)
+    component_count, _, stats, _ = cv2.connectedComponentsWithStats(dark, 8)
+    small_spots = 0
+    spot_area = 0.0
+    for idx in range(1, component_count):
+        area = float(stats[idx, cv2.CC_STAT_AREA])
+        if 3 <= area <= masked_area * 0.012:
+            small_spots += 1
+            spot_area += area
+    small_spot_density = min(small_spots / 45.0, 1.0)
+    spot_area_ratio = min(spot_area / max(masked_area * 0.10, 1.0), 1.0)
+
+    rough_peel = min(0.35 * min(edge_density * 4.0, 1.0) + 0.35 * lap_var + 0.30 * local_contrast, 1.0)
+    fuzzy_surface = min(0.30 * rough_peel + 0.25 * min(edge_density * 5.0, 1.0) + 0.25 * brown_hair * 2.0 + 0.20 * dark_hair, 1.0)
+    speckled_surface = min(0.55 * small_spot_density + 0.30 * spot_area_ratio + 0.15 * local_contrast, 1.0)
+    glossy_surface = min(0.65 * bright_patch * 3.0 + 0.20 * (1.0 - rough_peel) + 0.15 * (1.0 - min(edge_density * 6.0, 1.0)), 1.0)
+
+    return np.array([
+        fuzzy_surface,
+        rough_peel,
+        speckled_surface,
+        glossy_surface,
+        min(edge_density * 5.0, 1.0),
+        lap_var,
+        local_contrast,
+        min(brown_hair * 2.0, 1.0),
+        small_spot_density,
+        min(bright_patch * 3.0, 1.0),
     ], dtype=np.float32)
 
 
@@ -505,6 +577,7 @@ def extract_features_from_image(img):
         'fruit_shape': fruit_shape_feature(img, mask),
         'fruit_texture': fruit_texture_feature(img, mask),
         'fruit_structure': fruit_structure_feature(img, mask),
+        'surface_mark': surface_mark_feature(img, mask),
         'text_mark': text_mark_feature(img, mask),
         'sign_symbol': sign_symbol_feature(img, mask),
     }

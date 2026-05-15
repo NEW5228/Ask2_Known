@@ -3,6 +3,19 @@ import numpy as np
 from ask2know.features.basic_features import extract_features, extract_features_from_image
 from ask2know.concepts.basic_concepts import concepts_from_features, concept_similarity
 
+CONCEPTS_BY_GROUP = {
+    'color': {
+        'red', 'orange', 'yellow', 'green', 'cyan', 'blue', 'purple', 'pink',
+        'brown', 'black', 'white', 'gray', 'color_family', 'dark', 'bright',
+    },
+    'shape': {'round', 'elongated', 'pear_like', 'rectangular_like', 'single_object', 'cluster_like', 'repeated_parts'},
+    'texture': {'smooth_surface', 'texture_rich', 'edge_rich', 'cluster_like', 'repeated_parts'},
+    'surface': {'fuzzy_surface', 'rough_peel', 'speckled_surface', 'glossy_surface'},
+    'quality': {'clear_foreground', 'background_interference'},
+    'text': {'text_like', 'character_parts'},
+    'sign': {'sign_like', 'arrow_like', 'prohibition_like'},
+}
+
 
 def _mean_vectors(vectors):
     if not vectors:
@@ -13,7 +26,7 @@ def _mean_vectors(vectors):
 def _hist_similarity(a, b):
     a = np.asarray(a, dtype=np.float32)
     b = np.asarray(b, dtype=np.float32)
-    hist_len = max(0, len(a) - 14)  # HSV hist + 6 stats + 8 coarse color bins
+    hist_len = max(0, len(a) - 20)  # HSV hist + 6 stats + 14 coarse color bins
     if hist_len > 0:
         ah = a[:hist_len]
         bh = b[:hist_len]
@@ -76,6 +89,23 @@ class PrototypeModel:
         self.feature_counts = {}
         self.concept_counts = {}
 
+    def _allowed_concepts(self):
+        if not self.feature_groups:
+            return None
+        groups = set(self.feature_groups.keys())
+        groups.update(name for name in self.system_feature_names if name in CONCEPTS_BY_GROUP)
+        allowed = set()
+        for group in groups:
+            allowed.update(CONCEPTS_BY_GROUP.get(group, set()))
+        return allowed
+
+    def _concepts_from_features(self, feats):
+        concepts = concepts_from_features(feats)
+        allowed = self._allowed_concepts()
+        if allowed is None:
+            return concepts
+        return {name: value for name, value in concepts.items() if name in allowed}
+
     def _feature_list_for_sample(self, path):
         feats_list = [extract_features(path)]
         for img in _augmented_images(path, self.augmentation_config):
@@ -104,7 +134,7 @@ class PrototypeModel:
                         grouped[label].setdefault(name, []).append(feats[name])
                 if self.concepts_enabled:
                     concept_grouped.setdefault(label, {})
-                    for cname, value in concepts_from_features(feats).items():
+                    for cname, value in self._concepts_from_features(feats).items():
                         concept_grouped[label].setdefault(cname, []).append(float(value))
         self.prototypes = {}
         self.concept_prototypes = {}
@@ -138,7 +168,7 @@ class PrototypeModel:
                 if name in feats:
                     new_vectors.setdefault(name, []).append(feats[name])
             if self.concepts_enabled:
-                for cname, value in concepts_from_features(feats).items():
+                for cname, value in self._concepts_from_features(feats).items():
                     new_concepts.setdefault(cname, []).append(float(value))
         for name, vectors in new_vectors.items():
             if not vectors:
@@ -186,6 +216,8 @@ class PrototypeModel:
             return _vector_similarity(a, b, scale=4.8)
         if name == 'fruit_structure':
             return _vector_similarity(a, b, scale=5.2)
+        if name == 'surface_mark':
+            return _vector_similarity(a, b, scale=5.0)
         if name == 'text_mark':
             return _vector_similarity(a, b, scale=5.0)
         if name == 'sign_symbol':
@@ -202,7 +234,7 @@ class PrototypeModel:
 
     def predict(self, image_path, weights):
         feats = extract_features(image_path)
-        sample_concepts = concepts_from_features(feats) if self.concepts_enabled else {}
+        sample_concepts = self._concepts_from_features(feats) if self.concepts_enabled else {}
         results = []
         for label, proto in self.prototypes.items():
             detail = {}

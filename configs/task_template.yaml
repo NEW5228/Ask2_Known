@@ -18,6 +18,7 @@ features:
     color: true
     shape: true
     texture: true
+    surface: true
     size: true
     text: false
     sign: false
@@ -33,6 +34,7 @@ learning:
     color: 0.28
     shape: 0.32
     texture: 0.25
+    surface: 0.16
     size: 0.05
   default_feature_weight: 0.08
   update_step: 0.07

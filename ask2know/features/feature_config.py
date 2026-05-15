@@ -1,5 +1,5 @@
-USER_FEATURE_GROUPS = ('color', 'shape', 'texture', 'size', 'text', 'sign')
-DEFAULT_USER_FEATURE_GROUPS = ('color', 'shape', 'texture', 'size')
+USER_FEATURE_GROUPS = ('color', 'shape', 'texture', 'surface', 'size', 'text', 'sign')
+DEFAULT_USER_FEATURE_GROUPS = ('color', 'shape', 'texture', 'surface', 'size')
 SYSTEM_FEATURES = ('quality',)
 
 FRUIT_CLASS_NAMES = {
@@ -19,6 +19,7 @@ PRESET_FEATURES = {
         'color': ['color'],
         'shape': ['contour'],
         'texture': ['texture'],
+        'surface': ['surface_mark'],
         'size': ['size'],
         'text': ['text_mark'],
         'sign': ['sign_symbol'],
@@ -27,6 +28,7 @@ PRESET_FEATURES = {
         'color': ['color', 'fruit_color'],
         'shape': ['contour', 'fruit_shape', 'fruit_structure'],
         'texture': ['texture', 'fruit_texture'],
+        'surface': ['surface_mark'],
         'size': ['size'],
         'text': ['text_mark'],
         'sign': ['sign_symbol'],
@@ -35,6 +37,7 @@ PRESET_FEATURES = {
         'color': ['color'],
         'shape': ['contour'],
         'texture': ['texture'],
+        'surface': ['surface_mark'],
         'size': ['size'],
         'text': ['text_mark'],
         'sign': ['sign_symbol'],
@@ -45,9 +48,16 @@ DEFAULT_GROUP_WEIGHTS = {
     'color': 0.28,
     'shape': 0.32,
     'texture': 0.25,
+    'surface': 0.16,
     'size': 0.05,
     'text': 0.18,
     'sign': 0.28,
+}
+
+PRESET_DEFAULT_GROUPS = {
+    'general': ('color', 'shape', 'texture', 'surface', 'size'),
+    'fruit': ('color', 'shape', 'texture', 'surface', 'size'),
+    'traffic_sign': ('color', 'shape', 'text', 'sign'),
 }
 
 
@@ -72,16 +82,17 @@ def parse_feature_config(cfg, classes=None):
     if not isinstance(raw, dict) or 'groups' not in raw:
         raise ValueError(
             'Unsupported feature config. Use the new format: '
-            'features: {preset: fruit, groups: {color: true, shape: true, texture: true, size: true, text: false, sign: false}, '
+            'features: {preset: fruit, groups: {color: true, shape: true, texture: true, surface: true, size: true, text: false, sign: false}, '
             'system: {quality: true}}.'
         )
 
     preset = resolve_feature_preset(raw.get('preset', 'auto'), classes)
     groups_raw = raw.get('groups') or {}
     system_raw = raw.get('system') or {}
+    default_groups = set(PRESET_DEFAULT_GROUPS.get(preset, DEFAULT_USER_FEATURE_GROUPS))
 
     groups = {
-        name: bool(groups_raw.get(name, name in DEFAULT_USER_FEATURE_GROUPS))
+        name: bool(groups_raw.get(name, name in default_groups))
         for name in USER_FEATURE_GROUPS
     }
     system = {name: bool(system_raw.get(name, True)) for name in SYSTEM_FEATURES}

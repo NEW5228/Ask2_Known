@@ -22,7 +22,7 @@ from ask2know.features.feature_config import (
     summarize_group_weights,
 )
 
-VERSION = '0.3.7.1'
+VERSION = '0.3.7.2'
 
 
 def open_image_file(image_path):
@@ -222,7 +222,7 @@ def _parse_multi_choice(text, valid_keys):
 def ask_correction_reason(predicted_label, true_label, pairwise_manager, adaptive_weights, feature_spec, sample_path=None):
     """Ask why a wrong prediction happened and store pairwise experience.
 
-    v0.3.7.1 supports multi-select answers because real differences often involve
+    v0.3.7.2 supports multi-select answers because real differences often involve
     color + shape + texture together.
     """
     if not predicted_label or not true_label or predicted_label == true_label:
@@ -412,6 +412,16 @@ def make_experience_summary(pairwise_state, objects):
 def make_class_understanding_summary(model, objects, pairwise_state=None):
     """Summarize what the current concept prototypes say about each class."""
     diagnostic_concepts = {'clear_foreground', 'background_interference'}
+    generic_summary_concepts = {'color_family', 'rectangular_like'}
+    summary_priority = {
+        'red': 10, 'orange': 10, 'yellow': 10, 'green': 10, 'cyan': 10,
+        'blue': 10, 'purple': 10, 'pink': 10, 'brown': 10, 'black': 10,
+        'white': 10, 'gray': 10, 'dark': 9, 'bright': 9,
+        'round': 8, 'elongated': 8, 'pear_like': 8,
+        'fuzzy_surface': 7, 'rough_peel': 7, 'speckled_surface': 7, 'glossy_surface': 7,
+        'texture_rich': 6, 'smooth_surface': 6, 'edge_rich': 6,
+        'cluster_like': 5, 'repeated_parts': 5, 'single_object': 5,
+    }
     labels = [o.get('name') for o in objects]
     concept_prototypes = getattr(model, 'concept_prototypes', {}) or {}
     concept_counts = getattr(model, 'concept_counts', {}) or {}
@@ -441,7 +451,17 @@ def make_class_understanding_summary(model, objects, pairwise_state=None):
             if label in [str(x) for x in pair.get('classes', [])]
         ]
         if strong:
-            concept_text = '、'.join([item['name'] for item in strong[:5]])
+            summary_items = [
+                item for item in strong
+                if item['id'] not in generic_summary_concepts or float(item['score']) >= 0.82
+            ]
+            summary_items.sort(
+                key=lambda item: (summary_priority.get(item['id'], 0), float(item['score'])),
+                reverse=True,
+            )
+            if not summary_items:
+                summary_items = strong
+            concept_text = '、'.join([item['name'] for item in summary_items[:5]])
             summary_text = f'系统目前认为 {label} 更像：{concept_text}。'
         else:
             summary_text = f'系统目前对 {label} 的可解释概念证据不足，需要更多清晰样本或用户纠正。'
@@ -503,7 +523,7 @@ def main():
     parser = argparse.ArgumentParser(description='Ask2Know low-sample active teaching demo')
     parser.add_argument('--config', default='configs/fruit_demo.yaml')
     parser.add_argument('--preview', action='store_true', help='手动开启图片预览。默认关闭，避免 Windows 图片查看器占用文件导致卡死')
-    parser.add_argument('--no-preview', action='store_true', help='兼容旧参数；v0.3.7.1 默认就是不预览')
+    parser.add_argument('--no-preview', action='store_true', help='兼容旧参数；v0.3.7.2 默认就是不预览')
     args = parser.parse_args()
 
     cfg = load_yaml(args.config)

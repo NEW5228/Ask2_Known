@@ -15,7 +15,7 @@ from ask2know.features.feature_config import (
     resolve_feature_preset,
 )
 
-VERSION = '0.3.7.1'
+VERSION = '0.3.7.2'
 
 
 def write_json(path, data):

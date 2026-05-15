@@ -1,3 +1,14 @@
+# a2k_v0.3.7.2 更新日志
+
+## v0.3.7.2 新增/调整
+
+- 新增用户可选特征组：`surface`，用于表面绒毛、粗糙表皮、斑点/籽点和反光感。
+- 新增内部特征：`surface_mark`，继续使用 OpenCV / NumPy 轻量规则，不引入深度模型。
+- 扩展颜色概念：新增 `brown`、`black`、`white`、`gray`、`pink`、`cyan`，让类别总结可以输出“偏棕、偏灰、偏粉、偏青绿”等。
+- fruit 和 general 新建任务默认启用 `surface`；traffic_sign 新建任务默认继续启用 `color`、`shape`、`text`、`sign`。
+- 新增 `Q_SURFACE_IMPORTANCE`，纠错追问也支持选择 surface 原因。
+- 修复概念污染：未启用的 `text`、`sign`、`surface` 概念不会进入当前任务的概念原型和类别理解总结。
+
 # a2k_v0.3.7.1 更新日志
 
 ## v0.3.7.1 新增/调整

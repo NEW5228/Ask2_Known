@@ -47,6 +47,18 @@ QUESTION_BANK = [
         ]
     },
     {
+        'id': 'Q_SURFACE_IMPORTANCE',
+        'feature': 'surface',
+        'kind': 'feature_importance',
+        'template': '{a} 和 {b} 是否主要通过表面特征区分？',
+        'options': [
+            ('A', '表面绒毛、粗糙皮、斑点或反光差异明显，表面特征很重要', {'increase': ['surface'], 'decrease': []}),
+            ('B', '表面特征不稳定，不能主要靠表面判断', {'increase': [], 'decrease': ['surface']}),
+            ('C', '当前图片太糊/反光/遮挡，表面特征不可靠', {'increase': [], 'decrease': ['surface']}),
+            ('D', '不确定', {'increase': [], 'decrease': []}),
+        ]
+    },
+    {
         'id': 'Q_TEXT_IMPORTANCE',
         'feature': 'text',
         'kind': 'feature_importance',
@@ -76,8 +88,8 @@ QUESTION_BANK = [
         'kind': 'sample_quality',
         'template': '这张图片是否适合作为学习样本？',
         'options': [
-            ('A', '适合，主体清晰，背景干扰少', {'increase': ['texture', 'shape'], 'decrease': []}),
-            ('B', '不适合，太糊/遮挡/主体不明显', {'increase': [], 'decrease': ['texture', 'shape']}),
+            ('A', '适合，主体清晰，背景干扰少', {'increase': ['texture', 'surface', 'shape'], 'decrease': []}),
+            ('B', '不适合，太糊/遮挡/主体不明显', {'increase': [], 'decrease': ['texture', 'surface', 'shape']}),
             ('C', '可以判断，但不要加入正式样本库', {'increase': [], 'decrease': []}),
             ('D', '不确定', {'increase': [], 'decrease': []}),
         ]

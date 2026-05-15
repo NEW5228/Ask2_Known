@@ -8,6 +8,7 @@ FEATURE_TO_QUESTION = {
     'contour': 'Q_CONTOUR_IMPORTANCE',
     'texture': 'Q_TEXTURE_IMPORTANCE',
     'cluster': 'Q_TEXTURE_IMPORTANCE',
+    'surface': 'Q_SURFACE_IMPORTANCE',
     'text': 'Q_TEXT_IMPORTANCE',
     'sign': 'Q_SIGN_IMPORTANCE',
     'quality': 'Q_SAMPLE_QUALITY',
@@ -20,6 +21,7 @@ REASON_TO_FEATURES = {
     'shape': ['shape'],
     'texture': ['texture'],
     'cluster': ['texture', 'shape'],
+    'surface': ['surface'],
     'text': ['text'],
     'sign': ['sign'],
     'background': [],
@@ -33,6 +35,7 @@ REASON_TO_CONCEPTS = {
     'shape': ['round', 'elongated', 'pear_like', 'rectangular_like'],
     'texture': ['smooth_surface', 'texture_rich', 'edge_rich'],
     'cluster': ['single_object', 'cluster_like', 'repeated_parts'],
+    'surface': ['fuzzy_surface', 'rough_peel', 'speckled_surface', 'glossy_surface'],
     'text': ['text_like', 'character_parts'],
     'sign': ['sign_like', 'arrow_like', 'prohibition_like'],
     'background': ['background_interference', 'clear_foreground'],
@@ -107,7 +110,7 @@ def pair_key(a, b):
 
 
 class PairwiseExperienceManager:
-    def __init__(self, metadata_dir=None, path=None, version='0.3.7.1'):
+    def __init__(self, metadata_dir=None, path=None, version='0.3.7.2'):
         self.version = version
         if path is not None:
             self.path = Path(path)
@@ -255,10 +258,11 @@ class PairwiseExperienceManager:
             ('B', 'shape', shape_hint, {'increase': ['shape'], 'decrease': []}),
             ('C', 'texture', texture_hint, {'increase': ['texture'], 'decrease': []}),
             ('D', 'cluster', cluster_hint, {'increase': ['texture', 'shape'], 'decrease': []}),
-            ('E', 'text', '文字、数字或字符笔画区域不同。', {'increase': ['text'], 'decrease': []}),
-            ('F', 'sign', '箭头、禁止符号、方向性结构或标识图案不同。', {'increase': ['sign'], 'decrease': []}),
-            ('G', 'background', '背景、光线、遮挡或主体不清楚影响了判断。', {'increase': [], 'decrease': ['color', 'texture', 'text', 'sign']}),
-            ('H', 'other', '不确定 / 其他原因。', {'increase': [], 'decrease': []}),
+            ('E', 'surface', '表面绒毛、粗糙皮、斑点/籽点或反光不同。', {'increase': ['surface'], 'decrease': []}),
+            ('F', 'text', '文字、数字或字符笔画区域不同。', {'increase': ['text'], 'decrease': []}),
+            ('G', 'sign', '箭头、禁止符号、方向性结构或标识图案不同。', {'increase': ['sign'], 'decrease': []}),
+            ('H', 'background', '背景、光线、遮挡或主体不清楚影响了判断。', {'increase': [], 'decrease': ['color', 'texture', 'surface', 'text', 'sign']}),
+            ('I', 'other', '不确定 / 其他原因。', {'increase': [], 'decrease': []}),
         ]
 
     def export(self):

@@ -7,8 +7,14 @@ CONCEPT_NAMES = [
     'orange',
     'yellow',
     'green',
+    'cyan',
     'blue',
     'purple',
+    'pink',
+    'brown',
+    'black',
+    'white',
+    'gray',
     'color_family',
     'dark',
     'bright',
@@ -19,6 +25,10 @@ CONCEPT_NAMES = [
     'smooth_surface',
     'texture_rich',
     'edge_rich',
+    'fuzzy_surface',
+    'rough_peel',
+    'speckled_surface',
+    'glossy_surface',
     'single_object',
     'cluster_like',
     'repeated_parts',
@@ -36,8 +46,14 @@ DISPLAY_NAMES = {
     'orange': '偏橙',
     'yellow': '偏黄',
     'green': '偏绿',
+    'cyan': '偏青绿',
     'blue': '偏蓝',
     'purple': '偏紫',
+    'pink': '偏粉',
+    'brown': '偏棕',
+    'black': '偏黑',
+    'white': '偏白',
+    'gray': '偏灰',
     'color_family': '颜色类别明显',
     'dark': '偏暗',
     'bright': '偏亮',
@@ -48,6 +64,10 @@ DISPLAY_NAMES = {
     'smooth_surface': '表面较平滑',
     'texture_rich': '纹理较丰富',
     'edge_rich': '边缘/局部线条明显',
+    'fuzzy_surface': '有绒毛感',
+    'rough_peel': '表皮较粗糙',
+    'speckled_surface': '有斑点/籽点',
+    'glossy_surface': '表面有反光',
     'single_object': '更像单体',
     'cluster_like': '有聚集感',
     'repeated_parts': '有重复结构',
@@ -88,16 +108,24 @@ def concepts_from_features(features):
     concepts = _concept_dict()
 
     color = _safe_array(features.get('color'))
-    if color.size >= 8:
-        red, orange, yellow, green, blue, purple, dark, bright = color[-8:]
+    if color.size >= 14:
+        red, orange, yellow, green, cyan, blue, purple, pink, brown, black, white, gray, dark, bright = color[-14:]
+        brown_score = _clip01(brown)
+        orange_score = _clip01(max(0.0, float(orange) - 0.65 * brown_score))
         concepts.update({
             'red': _clip01(red),
-            'orange': _clip01(orange),
+            'orange': orange_score,
             'yellow': _clip01(yellow),
             'green': _clip01(green),
+            'cyan': _clip01(cyan),
             'blue': _clip01(blue),
             'purple': _clip01(purple),
-            'color_family': _clip01(max(red, orange, yellow, green, blue, purple)),
+            'pink': _clip01(pink),
+            'brown': brown_score,
+            'black': _clip01(black),
+            'white': _clip01(white),
+            'gray': _clip01(gray),
+            'color_family': _clip01(max(red, orange_score, yellow, green, cyan, blue, purple, pink, brown_score, black, white, gray)),
             'dark': _clip01(dark),
             'bright': _clip01(bright),
         })
@@ -126,6 +154,13 @@ def concepts_from_features(features):
         concepts['edge_rich'] = edge_density
         concepts['texture_rich'] = texture_rich
         concepts['smooth_surface'] = _clip01(1.0 - texture_rich)
+
+    surface = _safe_array(features.get('surface_mark'))
+    if surface.size >= 4:
+        concepts['fuzzy_surface'] = _clip01(surface[0])
+        concepts['rough_peel'] = _clip01(surface[1])
+        concepts['speckled_surface'] = _clip01(surface[2])
+        concepts['glossy_surface'] = _clip01(surface[3])
 
     quality = _safe_array(features.get('quality'))
     if quality.size >= 2:
