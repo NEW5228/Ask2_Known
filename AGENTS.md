@@ -23,9 +23,9 @@ python -m build
 
 Use standard Python style with 4-space indentation, `snake_case` functions and variables, and `PascalCase` classes. Prefer `pathlib.Path` for filesystem paths and keep JSON/YAML access through helpers in `ask2know/utils/io_utils.py` where practical. Keep modules focused on one domain concept and avoid adding heavy ML dependencies; this prototype currently relies on OpenCV, NumPy, and PyYAML. Preserve UTF-8 text handling because docs, prompts, and generated task files include Chinese copy.
 
-## 0.4.0 Architecture Direction
+## 0.4.1 Architecture Direction
 
-Ask2Know should evolve as an embedding + similarity + user feedback pipeline without losing active teaching. Treat CLIP/DINO/ResNet/MobileNet-style embeddings as optional adapters and internal scoring signals, not replacements for the explainable concept layer. Prototype similarity, k-NN nearest-sample evidence, concept prototypes, confidence/uncertainty, active questions, pairwise experience, and online user feedback should remain coordinated parts of the same loop. User-facing questions should prefer explainable features such as color, shape, texture, surface, part, text, sign, and quality rather than asking users to reason about raw embeddings.
+Ask2Know should evolve as a CLIP embedding + similarity + user feedback pipeline without losing active teaching. OpenCLIP is a required runtime dependency in v0.4.1; do not add an OpenCV embedding fallback unless the project direction changes. Treat embeddings as internal scoring signals, not replacements for the explainable concept layer. Prototype similarity, k-NN nearest-sample evidence, concept prototypes, confidence/uncertainty, active questions, pairwise experience, and online user feedback should remain coordinated parts of the same loop. User-facing questions should prefer explainable features such as color, shape, texture, surface, part, text, sign, and quality rather than asking users to reason about raw embeddings.
 
 ## Testing Guidelines
 

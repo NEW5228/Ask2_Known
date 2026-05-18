@@ -3,6 +3,18 @@ DEFAULT_USER_FEATURE_GROUPS = ('color', 'shape', 'texture', 'surface', 'size')
 SYSTEM_FEATURES = ('quality',)
 SCORING_ONLY_FEATURE_GROUPS = ('embedding',)
 
+DEFAULT_DEEP_FEATURE_CONFIG = {
+    'enable': True,
+    'provider': 'open_clip',
+    'model_name': 'ViT-B-32',
+    'pretrained': 'laion2b_s34b_b79k',
+    'device': 'auto',
+    'feature_name': 'image_embedding',
+    'cache': True,
+    'fallback_to_opencv': False,
+    'include_augmented': False,
+}
+
 FRUIT_CLASS_NAMES = {
     'apple', 'banana', 'pear', 'grape', 'orange', 'peach', 'cherry',
     'strawberry', 'lemon', 'lime', 'mango', 'watermelon', 'kiwi',
@@ -102,6 +114,21 @@ def resolve_feature_preset(preset, classes=None):
     return preset
 
 
+def resolve_deep_feature_config(cfg):
+    raw = cfg.get('deep_features')
+    merged = dict(DEFAULT_DEEP_FEATURE_CONFIG)
+    if isinstance(raw, dict):
+        merged.update(raw)
+    if not bool(merged.get('enable', True)):
+        raise ValueError('Ask2Know v0.4.1 requires deep_features.enable: true with provider: open_clip.')
+    provider = str(merged.get('provider', 'open_clip')).strip().lower()
+    if provider not in ('clip', 'open_clip'):
+        raise ValueError('Ask2Know v0.4.1 requires deep_features.provider: open_clip.')
+    merged['provider'] = provider
+    merged['fallback_to_opencv'] = False
+    return merged
+
+
 def parse_feature_config(cfg, classes=None):
     raw = cfg.get('features')
     if not isinstance(raw, dict) or 'groups' not in raw:
@@ -134,7 +161,7 @@ def parse_feature_config(cfg, classes=None):
                 scoring_features.append(name)
 
     system_features = [name for name in SYSTEM_FEATURES if system.get(name, True)]
-    deep_raw = cfg.get('deep_features') or {}
+    deep_raw = resolve_deep_feature_config(cfg)
     deep_enabled = bool(deep_raw.get('enable', False))
     if deep_enabled:
         deep_feature_name = str(deep_raw.get('feature_name', 'image_embedding'))

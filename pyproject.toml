@@ -4,14 +4,19 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ask2know"
-version = "0.4.0"
+version = "0.4.1"
 description = "Low-sample active teaching framework prototype"
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
     "opencv-python>=4.8.0",
     "numpy>=1.23.0",
-    "PyYAML>=6.0"
+    "PyYAML>=6.0",
+    "torch>=2.0.0",
+    "torchvision>=0.15.0",
+    "Pillow>=10.0.0",
+    "open_clip_torch>=2.24.0",
+    "rich>=13.8,<14"
 ]
 
 [tool.setuptools.packages.find]

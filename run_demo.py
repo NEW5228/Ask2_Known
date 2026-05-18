@@ -19,10 +19,11 @@ from ask2know.features.feature_config import (
     expand_feature_adjustments,
     initial_feature_weights,
     parse_feature_config,
+    resolve_deep_feature_config,
     summarize_group_weights,
 )
 
-VERSION = '0.4.0'
+VERSION = '0.4.1'
 
 
 def open_image_file(image_path):
@@ -235,7 +236,7 @@ def _parse_multi_choice(text, valid_keys):
 def ask_correction_reason(predicted_label, true_label, pairwise_manager, adaptive_weights, feature_spec, sample_path=None):
     """Ask why a wrong prediction happened and store pairwise experience.
 
-    v0.4.0 supports multi-select answers because real differences often involve
+    v0.4.1 supports multi-select answers because real differences often involve
     color + shape + texture together.
     """
     if not predicted_label or not true_label or predicted_label == true_label:
@@ -538,7 +539,7 @@ def main():
     parser = argparse.ArgumentParser(description='Ask2Know low-sample active teaching demo')
     parser.add_argument('--config', default='configs/fruit_demo.yaml')
     parser.add_argument('--preview', action='store_true', help='手动开启图片预览。默认关闭，避免 Windows 图片查看器占用文件导致卡死')
-    parser.add_argument('--no-preview', action='store_true', help='兼容旧参数；v0.4.0 默认就是不预览')
+    parser.add_argument('--no-preview', action='store_true', help='兼容旧参数；v0.4.1 默认就是不预览')
     args = parser.parse_args()
 
     cfg = load_yaml(args.config)
@@ -552,6 +553,7 @@ def main():
     loader = DatasetLoader(dataset_dir)
     objects = loader.load_objects()
     concepts = loader.load_concepts()
+    deep_feature_config = resolve_deep_feature_config(cfg)
     feature_spec = parse_feature_config(cfg, classes=class_names(objects) or cfg.get('classes', []))
     feature_names = feature_spec['scoring_features']
     display_features = feature_spec['display_features']
@@ -603,9 +605,9 @@ def main():
     print('启用特征:', ', '.join(display_features))
     if system_feature_names:
         print('系统质量检查:', ', '.join(system_feature_names))
-    deep_cfg = cfg.get('deep_features', {})
+    deep_cfg = deep_feature_config
     if deep_cfg.get('enable', False):
-        print('Embedding 内部特征:', deep_cfg.get('provider', 'opencv'), deep_cfg.get('feature_name', 'image_embedding'))
+        print('Embedding 内部特征:', deep_cfg.get('provider', 'open_clip'), deep_cfg.get('feature_name', 'image_embedding'))
     knn_cfg = cfg.get('similarity', {}).get('knn', {})
     if knn_cfg.get('enable', False):
         print(f'kNN 相似样本证据: k={knn_cfg.get("k", 3)}, weight={float(knn_cfg.get("score_weight", 0.20)):.2f}')
@@ -626,7 +628,7 @@ def main():
         system_feature_names=system_feature_names,
         feature_groups=feature_spec['group_features'],
         similarity_config=cfg.get('similarity', {}),
-        deep_feature_config=cfg.get('deep_features', {}),
+        deep_feature_config=deep_feature_config,
         deep_cache_dir=output_dir / '.cache' / 'deep_features',
     ).fit(train_samples)
     q_selector = QuestionSelector(pairwise_manager=pairwise, enabled_features=display_features)

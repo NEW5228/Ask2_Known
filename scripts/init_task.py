@@ -15,7 +15,7 @@ from ask2know.features.feature_config import (
     resolve_feature_preset,
 )
 
-VERSION = '0.4.0'
+VERSION = '0.4.1'
 
 
 def write_json(path, data):
@@ -61,10 +61,13 @@ concepts:
 
 deep_features:
   enable: true
-  provider: opencv
+  provider: open_clip
+  model_name: ViT-B-32
+  pretrained: laion2b_s34b_b79k
+  device: auto
   feature_name: image_embedding
   cache: true
-  fallback_to_opencv: true
+  fallback_to_opencv: false
   include_augmented: false
 
 similarity:

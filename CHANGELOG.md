@@ -1,3 +1,14 @@
+# a2k_v0.4.1 更新日志
+
+## v0.4.1 新增/调整
+
+- OpenCLIP 成为必需 embedding provider：默认 `provider: open_clip`，不再回退到 OpenCV embedding。
+- `requirements.txt` 和 `pyproject.toml` 加入 `torch`、`torchvision`、`pillow`、`open_clip_torch`。
+- 旧任务如果没有 `deep_features` 配置，会按 v0.4.1 默认值启用 OpenCLIP；如果显式关闭 deep features 或配置非 CLIP provider，会直接报错。
+- 新建任务模板默认使用 `ViT-B-32` + `laion2b_s34b_b79k`，并继续缓存 embedding。
+- 保留 v0.4.0 的 hybrid similarity、kNN 相似样本证据和概念层，但底层 embedding 从轻量 OpenCV 过渡到 CLIP。
+- 项目版本统一升级为 `0.4.1`。
+
 # a2k_v0.4.0 更新日志
 
 ## v0.4.0 新增/调整

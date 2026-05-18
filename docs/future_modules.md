@@ -19,14 +19,16 @@ This must be global and reusable across tasks, not hard-coded only for fruit.
 
 ## Deep feature adapter
 
-v0.4.0 enables the adapter path with a lightweight OpenCV embedding provider.
-Future optional providers can use CLIP / DINO / ResNet / MobileNet features.
+v0.4.1 makes OpenCLIP the required embedding provider.
+Future optional providers can use DINO / ResNet / MobileNet features, but the
+default low-sample pipeline assumes CLIP embedding is available.
 
-The shallow OpenCV feature path must stay available for lightweight use.
+The shallow OpenCV feature path stays available for explainable concepts, but
+not as an embedding fallback.
 
 ## Hybrid similarity
 
-v0.4.0 combines prototype similarity, optional k-NN nearest-sample evidence,
+v0.4.1 combines prototype similarity, k-NN nearest-sample evidence,
 concept prototype similarity, and user feedback weights.
 
 Embedding should remain an internal scoring signal. User-facing active teaching

@@ -1,3 +1,8 @@
 opencv-python
 numpy
 pyyaml
+torch
+torchvision
+pillow
+open_clip_torch
+rich>=13.8,<14

@@ -18,20 +18,18 @@ def _l2_normalize(vec):
 
 
 class DeepFeatureAdapter:
-    """Optional image embedding adapter.
+    """Required CLIP image embedding adapter for Ask2Know v0.4.1.
 
-    The default provider is a lightweight OpenCV embedding so v0.4.0 works
-    without heavyweight ML dependencies. Provider names such as clip/dino are
-    intentionally accepted as future extension points; until a local provider is
-    installed, they can fall back to the OpenCV embedding.
+    v0.4.1 makes OpenCLIP the production embedding path. OpenCV embedding from
+    v0.4.0 is kept only as private legacy code and is not an accepted provider.
     """
 
     def __init__(self, config=None, cache_dir=None):
         self.config = dict(config or {})
         self.enabled = bool(self.config.get('enable', False))
-        self.provider = str(self.config.get('provider', 'opencv')).strip().lower()
+        self.provider = str(self.config.get('provider', 'open_clip')).strip().lower()
         self.feature_name = str(self.config.get('feature_name', DEFAULT_DEEP_FEATURE_NAME))
-        self.fallback_to_opencv = bool(self.config.get('fallback_to_opencv', True))
+        self.fallback_to_opencv = bool(self.config.get('fallback_to_opencv', False))
         self.include_augmented = bool(self.config.get('include_augmented', False))
         self.cache_enabled = bool(self.config.get('cache', True))
         raw_cache_dir = self.config.get('cache_dir') or cache_dir
@@ -77,17 +75,11 @@ class DeepFeatureAdapter:
     def extract_image_vector(self, img):
         if img is None:
             return np.zeros(1, dtype=np.float32)
-        if self.provider in ('opencv', 'opencv_embedding', 'lightweight'):
-            return self._opencv_embedding(img)
         if self.provider in ('clip', 'open_clip'):
             return self._try_external_provider(img, self._open_clip_embedding)
-        if self.provider in ('dino', 'transformers', 'transformers_dino'):
-            return self._try_external_provider(img, self._transformers_embedding)
-        if self.fallback_to_opencv:
-            return self._opencv_embedding(img)
         raise ValueError(
-            f'Deep feature provider {self.provider!r} is not available in this lightweight build. '
-            'Use provider: opencv or enable fallback_to_opencv.'
+            f'Deep feature provider {self.provider!r} is not supported in Ask2Know v0.4.1. '
+            'Use provider: open_clip. OpenCV fallback is intentionally disabled.'
         )
 
     def _try_external_provider(self, img, extractor):
@@ -95,9 +87,11 @@ class DeepFeatureAdapter:
             return extractor(img)
         except Exception as exc:
             self._runtime_error = str(exc)
-            if self.fallback_to_opencv:
-                return self._opencv_embedding(img)
-            raise
+            raise RuntimeError(
+                'CLIP provider is required but unavailable. Install torch, torchvision, '
+                'pillow, and open_clip_torch, and make sure the configured OpenCLIP '
+                'model weights are cached or downloadable.'
+            ) from exc
 
     def _open_clip_embedding(self, img):
         if self._runtime is None:
