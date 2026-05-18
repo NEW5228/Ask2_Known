@@ -78,13 +78,59 @@ python scripts\init_task.py --name pet_task --classes cat dog --output D:\a2k_te
 D:\a2k_test\<task_name>\datasets\train\<class_name>
 ```
 
-待识别图片放到：
+待学习 unknown 图片放到：
 
 ```text
-D:\a2k_test\<task_name>\datasets\unlabeled
+D:\a2k_test\<task_name>\datasets\unknown
 ```
 
-图片文件名可以任意。运行时会根据配置自动规范化训练集和待识别图片文件名。
+图片文件名可以任意。运行时会根据配置自动规范化训练集和 unknown 图片文件名。
+
+## v0.4.2 数据目录和推荐流程
+
+v0.4.2 推荐的主流程是：先为每个类别准备少量已知样本，放入 `datasets/train/<class>`，让系统从一个可靠的小训练集开始。`datasets/unknown/` 的自动粗分功能保留为辅助整理工具，不建议直接把粗分结果当成最终训练集。
+
+```text
+datasets/train/<class>/       已确认训练样本，推荐主入口
+datasets/unknown/             待学习、待整理的混合未知图片
+datasets/unlabeled/<class>/   带真实标签的验证集，用于计算准确率
+```
+
+`run_demo.py` 会读取 `datasets/unknown/` 作为主动学习样本。`datasets/unlabeled/<class>/` 不进入主动学习，只用于评估。
+
+## v0.4.2 Bootstrap 粗分功能
+
+如果用户手里只有一堆混合图片，可以先放入 `datasets/unknown/`，再用 bootstrap 脚本粗分：
+
+```bat
+python scripts\bootstrap_clusters.py --config D:\a2k_test\<task_name>\configs\task_config.yaml
+```
+
+如果用户已经知道有哪些类别名，可以传入名字：
+
+```bat
+python scripts\bootstrap_clusters.py --config D:\a2k_test\<task_name>\configs\task_config.yaml --names 张三 李四 王五 赵六
+```
+
+脚本会读取 `datasets/unknown/`，用 CLIP embedding 聚类，展示每组代表图片，让用户确认每组叫什么，然后将确认后的图片复制到 `datasets/train/<class>/`。原始 `unknown/` 图片会保留。
+
+注意：bootstrap 是粗分辅助工具，不保证每个 cluster 都纯净。正式任务仍建议从人工整理的少量 `train/<class>` 样本开始；bootstrap 结果应由用户复核后再进入训练库。
+
+## 验证准确率
+
+把验证图片按真实类别放入 `datasets/unlabeled/<class>/` 后运行：
+
+```bat
+python scripts\evaluate_unlabeled.py --config D:\a2k_test\<task_name>\configs\task_config.yaml
+```
+
+评估报告会写入：
+
+```text
+outputs/evaluation_report.json
+```
+
+报告包含总准确率、每类准确率、混淆情况和错误样本列表。
 
 ## 运行
 
