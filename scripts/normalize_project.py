@@ -22,7 +22,7 @@ def main():
     loader = DatasetLoader(dataset_dir)
     objects = loader.load_objects()
     labels = [o['name'] for o in objects]
-    pool = SamplePoolManager(project_root=project_root, output_dir=output_dir, dataset_dir=dataset_dir, version='0.4.1')
+    pool = SamplePoolManager(project_root=project_root, output_dir=output_dir, dataset_dir=dataset_dir, version='0.4.1.1')
     pool.ensure_for_classes(labels)
     changed_train = pool.normalize_train_images(labels)
     changed_unlabeled = pool.normalize_unlabeled()

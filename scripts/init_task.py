@@ -15,7 +15,7 @@ from ask2know.features.feature_config import (
     resolve_feature_preset,
 )
 
-VERSION = '0.4.1'
+VERSION = '0.4.1.1'
 
 
 def write_json(path, data):
@@ -57,7 +57,7 @@ features:
 
 concepts:
   enable: true
-  score_weight: 0.25
+  score_weight: 0.05
 
 deep_features:
   enable: true
@@ -83,11 +83,11 @@ learning:
   default_feature_weight: 0.08
   update_step: 0.07
   min_weight: 0.05
-  max_weight: 0.70
+  max_weight: 0.95
 
 confidence:
   auto_accept_threshold: 0.88
-  ask_user_threshold: 0.12
+  ask_user_threshold: 0.03
   global_uncertainty_spread: 0.08
   global_uncertainty_top_n: 5
   saturation_ratio_threshold: 0.65
