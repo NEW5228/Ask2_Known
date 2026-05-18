@@ -30,6 +30,21 @@ concepts:
   enable: true
   score_weight: 0.25
 
+deep_features:
+  enable: true
+  provider: opencv
+  feature_name: image_embedding
+  cache: true
+  fallback_to_opencv: true
+  include_augmented: false
+
+similarity:
+  mode: hybrid
+  knn:
+    enable: true
+    k: 3
+    score_weight: 0.20
+
 learning:
   initial_weights:
     color: 0.28
@@ -38,6 +53,7 @@ learning:
     surface: 0.16
     part: 0.12
     size: 0.05
+    embedding: 0.22
   default_feature_weight: 0.08
   update_step: 0.07
   min_weight: 0.05
@@ -75,7 +91,7 @@ augmentation:
 future_modules:
   crawler_external_candidates: planned
   visual_concept_layer: planned
-  deep_feature_adapter: planned
+  deep_feature_adapter: enabled
 
 teaching:
   allow_region_seed: false

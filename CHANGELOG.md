@@ -1,3 +1,14 @@
+# a2k_v0.4.0 更新日志
+
+## v0.4.0 新增/调整
+
+- 新增 `ask2know.features.deep_adapter.DeepFeatureAdapter`，默认提供轻量 OpenCV image embedding，作为后续 CLIP/DINO/ResNet/MobileNet 适配器入口。
+- `PrototypeModel` 升级为 hybrid similarity：prototype 分数为主，kNN 相似样本证据可按权重混入总分。
+- 新增内部评分组 `embedding -> image_embedding`。它参与分类和权重输出，但不作为用户主动提问项。
+- `run_demo.py` 输出 `proto`、`knn`、`concept` 分数来源，并显示最相似训练样本。
+- 新建任务配置默认启用 `deep_features` 和 `similarity.knn`，同时保留 OpenCV 浅层特征、概念层、用户反馈和样本池流程。
+- 项目版本统一升级为 `0.4.0`。
+
 # a2k_v0.3.7.3 更新日志
 
 ## v0.3.7.3 新增/调整

@@ -19,6 +19,15 @@ This must be global and reusable across tasks, not hard-coded only for fruit.
 
 ## Deep feature adapter
 
-Future optional module to use CLIP / ResNet / MobileNet features.
+v0.4.0 enables the adapter path with a lightweight OpenCV embedding provider.
+Future optional providers can use CLIP / DINO / ResNet / MobileNet features.
 
 The shallow OpenCV feature path must stay available for lightweight use.
+
+## Hybrid similarity
+
+v0.4.0 combines prototype similarity, optional k-NN nearest-sample evidence,
+concept prototype similarity, and user feedback weights.
+
+Embedding should remain an internal scoring signal. User-facing active teaching
+questions should still focus on explainable visual concepts whenever possible.

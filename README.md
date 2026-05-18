@@ -1,6 +1,8 @@
 # Ask2Know
 
-Ask2Know 是一个面向个人和小团队的低样本主动教学训练框架。v0.3.7.3 在水果细化特征基础上新增轻量 `part` 特征组，让系统可以初步表达“有果皮感、有果肉感、切面明显、有籽点、有果核/中心结构、有瓣状结构、有厚皮/瓜皮感”等更接近真实水果观察的概念。
+Ask2Know 是一个面向个人和小团队的低样本主动教学训练框架。v0.4.0 开始转向 embedding + similarity + user feedback pipeline：系统同时使用可解释浅层特征、轻量 image embedding、prototype 相似度、kNN 相似样本证据、概念层和用户反馈来完成低样本持续学习。
+
+v0.4.0 默认启用轻量 OpenCV embedding，不引入 CLIP/DINO 等重型依赖；后续可以通过 `deep_features.provider` 接入本地 CLIP/DINO 适配器。embedding 是内部评分通道，主动提问仍优先围绕颜色、形状、纹理、表面、部位、文字和标识等用户能判断的概念。
 
 ## 安装
 
@@ -125,6 +127,26 @@ concepts:
 ```
 
 系统会从现有 OpenCV 特征中推导基础概念，例如颜色概念、形状概念、纹理/重复结构、主体清晰度和背景干扰。预测时会同时比较类别的特征原型和概念原型；提问时也会尝试用“我看到偏红、接近圆形、有聚集感”这类语言解释自己的观察。
+
+## v0.4.0 混合相似度
+
+新任务默认包含：
+
+```yaml
+deep_features:
+  enable: true
+  provider: opencv
+  feature_name: image_embedding
+
+similarity:
+  mode: hybrid
+  knn:
+    enable: true
+    k: 3
+    score_weight: 0.20
+```
+
+最终分数由 prototype、kNN 相似样本和概念原型共同构成。运行输出会显示 `proto`、`knn`、`concept` 分数来源，并给出最相似训练样本路径，方便人工检查。
 
 ## 数据增强
 

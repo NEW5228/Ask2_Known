@@ -23,6 +23,10 @@ python -m build
 
 Use standard Python style with 4-space indentation, `snake_case` functions and variables, and `PascalCase` classes. Prefer `pathlib.Path` for filesystem paths and keep JSON/YAML access through helpers in `ask2know/utils/io_utils.py` where practical. Keep modules focused on one domain concept and avoid adding heavy ML dependencies; this prototype currently relies on OpenCV, NumPy, and PyYAML. Preserve UTF-8 text handling because docs, prompts, and generated task files include Chinese copy.
 
+## 0.4.0 Architecture Direction
+
+Ask2Know should evolve as an embedding + similarity + user feedback pipeline without losing active teaching. Treat CLIP/DINO/ResNet/MobileNet-style embeddings as optional adapters and internal scoring signals, not replacements for the explainable concept layer. Prototype similarity, k-NN nearest-sample evidence, concept prototypes, confidence/uncertainty, active questions, pairwise experience, and online user feedback should remain coordinated parts of the same loop. User-facing questions should prefer explainable features such as color, shape, texture, surface, part, text, sign, and quality rather than asking users to reason about raw embeddings.
+
 ## Testing Guidelines
 
 No committed test suite is present yet. Add new tests under `tests/` using `pytest` when changing behavior, especially for dataset loading, file normalization, scoring, and feedback updates. Name files `test_<module>.py` and test functions `test_<behavior>()`. Prefer temporary directories for sample task projects instead of writing into `configs/` or repository data paths.
@@ -34,3 +38,7 @@ Git history currently uses short, imperative summaries such as `Add project desc
 ## Security & Configuration Tips
 
 Do not commit local task datasets, generated outputs, virtual environments, or private image collections. Keep project-specific paths in task config files, and use relative paths in examples when possible so demos work across machines.
+
+## Local File Safety
+
+Do not bulk-delete files or directories. Do not use `del /s`, `rd /s`, `rmdir /s`, `Remove-Item -Recurse`, or `rm -rf`. If deletion is required, delete only one explicit file path at a time, for example `Remove-Item "C:\path\to\file.txt"`. If a task requires batch deletion, stop and ask the user to handle it manually.

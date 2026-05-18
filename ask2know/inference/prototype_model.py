@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 from ask2know.features.basic_features import extract_features, extract_features_from_image
+from ask2know.features.deep_adapter import DeepFeatureAdapter, DEFAULT_DEEP_FEATURE_NAME
 from ask2know.concepts.basic_concepts import concepts_from_features, concept_similarity
 
 CONCEPTS_BY_GROUP = {
@@ -57,6 +58,20 @@ def _vector_similarity(a, b, scale=2.5):
     return max(0.0, min(1.0, sim))
 
 
+def _cosine_similarity(a, b):
+    a = np.asarray(a, dtype=np.float32).reshape(-1)
+    b = np.asarray(b, dtype=np.float32).reshape(-1)
+    if a.size != b.size:
+        n = min(a.size, b.size)
+        a = a[:n]
+        b = b[:n]
+    denom = float(np.linalg.norm(a) * np.linalg.norm(b))
+    if denom <= 1e-8:
+        return 0.0
+    cos = float(np.dot(a, b) / denom)
+    return max(0.0, min(1.0, (cos + 1.0) * 0.5))
+
+
 def _augmented_images(path, config):
     img = cv2.imread(str(path))
     if img is None:
@@ -83,7 +98,17 @@ def _augmented_images(path, config):
 
 
 class PrototypeModel:
-    def __init__(self, feature_names, augmentation_config=None, concept_config=None, system_feature_names=None, feature_groups=None):
+    def __init__(
+        self,
+        feature_names,
+        augmentation_config=None,
+        concept_config=None,
+        system_feature_names=None,
+        feature_groups=None,
+        similarity_config=None,
+        deep_feature_config=None,
+        deep_cache_dir=None,
+    ):
         self.feature_names = feature_names
         self.system_feature_names = list(system_feature_names or [])
         self.feature_groups = feature_groups or {}
@@ -91,9 +116,17 @@ class PrototypeModel:
         self.concept_config = concept_config or {'enable': True, 'score_weight': 0.25}
         self.concepts_enabled = self.concept_config.get('enable', True)
         self.concept_score_weight = float(self.concept_config.get('score_weight', 0.25))
+        self.similarity_config = similarity_config or {}
+        self.knn_config = dict(self.similarity_config.get('knn', {}))
+        self.knn_enabled = bool(self.knn_config.get('enable', False))
+        self.knn_k = max(1, int(self.knn_config.get('k', 3)))
+        self.knn_score_weight = max(0.0, min(0.8, float(self.knn_config.get('score_weight', 0.20))))
+        self.deep_adapter = DeepFeatureAdapter(deep_feature_config, cache_dir=deep_cache_dir)
+        self.deep_feature_name = self.deep_adapter.feature_name or DEFAULT_DEEP_FEATURE_NAME
         self.prototypes = {}
         self.concept_prototypes = {}
         self.samples = {}
+        self.sample_features = {}
         self.feature_counts = {}
         self.concept_counts = {}
 
@@ -114,11 +147,27 @@ class PrototypeModel:
             return concepts
         return {name: value for name, value in concepts.items() if name in allowed}
 
+    def _attach_deep_features(self, feats, path=None, img=None, allow_augmented=False):
+        if not self.deep_adapter.is_enabled():
+            return feats
+        if allow_augmented and not self.deep_adapter.include_augmented:
+            return feats
+        enriched = dict(feats)
+        if path is not None:
+            enriched.update(self.deep_adapter.extract_path(path))
+        elif img is not None:
+            enriched.update(self.deep_adapter.extract_image(img))
+        return enriched
+
+    def _extract_primary_features(self, path):
+        return self._attach_deep_features(extract_features(path), path=path)
+
     def _feature_list_for_sample(self, path):
-        feats_list = [extract_features(path)]
+        feats_list = [self._extract_primary_features(path)]
         for img in _augmented_images(path, self.augmentation_config):
             try:
-                feats_list.append(extract_features_from_image(img))
+                feats = extract_features_from_image(img)
+                feats_list.append(self._attach_deep_features(feats, img=img, allow_augmented=True))
             except Exception:
                 pass
         return feats_list
@@ -127,6 +176,7 @@ class PrototypeModel:
         grouped = {}
         concept_grouped = {}
         self.samples = {}
+        self.sample_features = {}
         self.feature_counts = {}
         self.concept_counts = {}
         for sample in samples:
@@ -134,6 +184,11 @@ class PrototypeModel:
             feats_list = self._feature_list_for_sample(sample['path'])
             self.samples.setdefault(label, [])
             self.samples[label].append(sample['path'])
+            if feats_list:
+                self.sample_features.setdefault(label, []).append({
+                    'path': sample['path'],
+                    'features': feats_list[0],
+                })
             for feats in feats_list:
                 all_feature_names = list(self.feature_names) + list(self.system_feature_names)
                 grouped.setdefault(label, {name: [] for name in all_feature_names if name in feats})
@@ -164,6 +219,11 @@ class PrototypeModel:
     def add_confirmed_sample(self, label, image_path):
         feats_list = self._feature_list_for_sample(image_path)
         self.samples.setdefault(label, []).append(image_path)
+        if feats_list:
+            self.sample_features.setdefault(label, []).append({
+                'path': image_path,
+                'features': feats_list[0],
+            })
         self.prototypes.setdefault(label, {})
         self.feature_counts.setdefault(label, {})
         self.concept_prototypes.setdefault(label, {})
@@ -238,7 +298,43 @@ class PrototypeModel:
             return _vector_similarity(a, b, scale=5.0)
         if name == 'sign_symbol':
             return _vector_similarity(a, b, scale=5.4)
+        if name == self.deep_feature_name or name == DEFAULT_DEEP_FEATURE_NAME:
+            return _cosine_similarity(a, b)
         return _vector_similarity(a, b, scale=2.5)
+
+    def _weighted_feature_score(self, feats, proto, weights):
+        detail = {}
+        score = 0.0
+        total_w = 0.0
+        for name, w in weights.items():
+            if name not in proto or name not in feats:
+                continue
+            sim = self._feature_similarity(name, feats[name], proto[name])
+            detail[name] = sim
+            score += float(w) * sim
+            total_w += float(w)
+        return score / max(total_w, 1e-8), detail
+
+    def _nearest_samples(self, label, feats, weights):
+        if not self.knn_enabled:
+            return None, []
+        neighbors = []
+        for item in self.sample_features.get(label, []):
+            sample_feats = item.get('features') or {}
+            score, detail = self._weighted_feature_score(feats, sample_feats, weights)
+            if detail:
+                neighbors.append({
+                    'path': str(item.get('path')),
+                    'score': float(score),
+                    'detail': detail,
+                    'group_detail': self._group_detail(detail),
+                })
+        neighbors.sort(key=lambda x: x['score'], reverse=True)
+        top = neighbors[:self.knn_k]
+        if not top:
+            return None, []
+        knn_score = float(np.mean([x['score'] for x in top]))
+        return knn_score, top
 
     def _group_detail(self, detail):
         out = {}
@@ -249,25 +345,20 @@ class PrototypeModel:
         return out
 
     def predict(self, image_path, weights):
-        feats = extract_features(image_path)
+        feats = self._extract_primary_features(image_path)
         sample_concepts = self._concepts_from_features(feats) if self.concepts_enabled else {}
         results = []
         for label, proto in self.prototypes.items():
-            detail = {}
-            score = 0.0
-            total_w = 0.0
-            for name, w in weights.items():
-                if name not in proto or name not in feats:
-                    continue
-                sim = self._feature_similarity(name, feats[name], proto[name])
-                detail[name] = sim
-                score += float(w) * sim
-                total_w += float(w)
+            prototype_score, detail = self._weighted_feature_score(feats, proto, weights)
             system_detail = {}
             for name in self.system_feature_names:
                 if name in proto and name in feats:
                     system_detail[name] = self._feature_similarity(name, feats[name], proto[name])
-            feature_score = score / max(total_w, 1e-8)
+            feature_score = prototype_score
+            knn_score, nearest = self._nearest_samples(label, feats, weights)
+            if knn_score is not None:
+                kw = self.knn_score_weight
+                feature_score = (1.0 - kw) * prototype_score + kw * knn_score
             final = feature_score
             concept_score = None
             concept_proto = self.concept_prototypes.get(label, {})
@@ -280,12 +371,15 @@ class PrototypeModel:
                 'label': label,
                 'score': final,
                 'feature_score': feature_score,
+                'prototype_score': prototype_score,
+                'knn_score': knn_score,
                 'concept_score': concept_score,
                 'detail': detail,
                 'group_detail': self._group_detail(detail),
                 'system_detail': system_detail,
                 'concepts': sample_concepts,
                 'class_concepts': concept_proto,
+                'nearest_samples': nearest,
             })
         results.sort(key=lambda x: x['score'], reverse=True)
         return results
@@ -301,6 +395,18 @@ class PrototypeModel:
                 'enable': self.concepts_enabled,
                 'score_weight': self.concept_score_weight,
             },
+            'similarity_config': {
+                'knn': {
+                    'enable': self.knn_enabled,
+                    'k': self.knn_k,
+                    'score_weight': self.knn_score_weight,
+                },
+            },
+            'deep_features': self.deep_adapter.metadata(),
             'feature_groups': self.feature_groups,
             'system_features': self.system_feature_names,
+            'sample_index': {
+                label: [str(path) for path in paths]
+                for label, paths in self.samples.items()
+            },
         }

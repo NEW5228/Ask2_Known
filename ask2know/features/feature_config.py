@@ -1,6 +1,7 @@
 USER_FEATURE_GROUPS = ('color', 'shape', 'texture', 'surface', 'part', 'size', 'text', 'sign')
 DEFAULT_USER_FEATURE_GROUPS = ('color', 'shape', 'texture', 'surface', 'size')
 SYSTEM_FEATURES = ('quality',)
+SCORING_ONLY_FEATURE_GROUPS = ('embedding',)
 
 FRUIT_CLASS_NAMES = {
     'apple', 'banana', 'pear', 'grape', 'orange', 'peach', 'cherry',
@@ -72,6 +73,7 @@ DEFAULT_GROUP_WEIGHTS = {
     'size': 0.05,
     'text': 0.18,
     'sign': 0.28,
+    'embedding': 0.22,
 }
 
 PRESET_DEFAULT_GROUPS = {
@@ -132,6 +134,14 @@ def parse_feature_config(cfg, classes=None):
                 scoring_features.append(name)
 
     system_features = [name for name in SYSTEM_FEATURES if system.get(name, True)]
+    deep_raw = cfg.get('deep_features') or {}
+    deep_enabled = bool(deep_raw.get('enable', False))
+    if deep_enabled:
+        deep_feature_name = str(deep_raw.get('feature_name', 'image_embedding'))
+        group_features['embedding'] = [deep_feature_name]
+        if deep_feature_name not in scoring_features:
+            scoring_features.append(deep_feature_name)
+
     all_features = list(scoring_features)
     for name in system_features:
         if name not in all_features:
@@ -152,6 +162,7 @@ def parse_feature_config(cfg, classes=None):
         'all_features': all_features,
         'group_features': group_features,
         'feature_to_group': feature_to_group,
+        'scoring_only_groups': [name for name in SCORING_ONLY_FEATURE_GROUPS if name in group_features],
     }
 
 

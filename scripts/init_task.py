@@ -15,7 +15,7 @@ from ask2know.features.feature_config import (
     resolve_feature_preset,
 )
 
-VERSION = '0.3.7.3'
+VERSION = '0.4.0'
 
 
 def write_json(path, data):
@@ -27,10 +27,13 @@ def write_json(path, data):
 def write_yaml_like(path, task_name, dataset_dir, output_dir, project_root, classes, feature_preset, enabled_features):
     class_lines = '\n'.join([f'  - {c}' for c in classes])
     group_lines = '\n'.join([f'    {name}: {str(name in enabled_features).lower()}' for name in USER_FEATURE_GROUPS])
+    weight_groups = list(enabled_features)
+    if 'embedding' not in weight_groups:
+        weight_groups.append('embedding')
     weight_lines = '\n'.join([
         f'    {name}: {DEFAULT_GROUP_WEIGHTS[name]:.2f}'
-        for name in USER_FEATURE_GROUPS
-        if name in enabled_features
+        for name in weight_groups
+        if name in DEFAULT_GROUP_WEIGHTS
     ])
     text = f'''task:
   name: {task_name}
@@ -55,6 +58,21 @@ features:
 concepts:
   enable: true
   score_weight: 0.25
+
+deep_features:
+  enable: true
+  provider: opencv
+  feature_name: image_embedding
+  cache: true
+  fallback_to_opencv: true
+  include_augmented: false
+
+similarity:
+  mode: hybrid
+  knn:
+    enable: true
+    k: 3
+    score_weight: 0.20
 
 learning:
   initial_weights:
@@ -96,7 +114,7 @@ augmentation:
 future_modules:
   crawler_external_candidates: planned
   visual_concept_layer: planned
-  deep_feature_adapter: planned
+  deep_feature_adapter: enabled
 
 teaching:
   allow_region_seed: false
