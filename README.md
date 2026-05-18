@@ -1,138 +1,106 @@
 # Ask2Know
 
-Ask2Know 是一个面向个人和小团队的低样本主动教学训练框架。v0.4.1 使用 CLIP embedding + similarity + user feedback pipeline：系统同时使用可解释浅层特征、CLIP image embedding、prototype 相似度、kNN 相似样本证据、概念层和用户反馈来完成低样本持续学习。
+Ask2Know 是一个面向低样本图像识别任务的主动教学框架。
 
-v0.4.1 要求安装 OpenCLIP 相关依赖，没有 `torch` / `open_clip_torch` / 模型权重时会直接报错，不再回退到 OpenCV embedding。embedding 是内部评分通道，主动提问仍优先围绕颜色、形状、纹理、表面、部位、文字和标识等用户能判断的概念。
+当前版本：`0.4.1`
 
-第一次使用默认 `ViT-B-32` / `laion2b_s34b_b79k` 时，OpenCLIP 可能需要下载模型权重；没有网络且本地没有缓存时，运行会失败。
+核心流程：
+
+```text
+图片
+-> 浅层可解释视觉特征
+-> CLIP image embedding
+-> prototype 相似度 + kNN 相似样本证据 + 概念相似度
+-> 不确定性判断 / 主动提问
+-> 用户确认或纠错
+-> 更新权重、原型、样本池和经验记录
+```
+
+从 `0.4.1` 开始，CLIP 是必需依赖。系统不会回退到 OpenCV embedding。如果
+`torch`、`open_clip_torch` 或配置的 CLIP 权重不可用，运行会直接失败。
 
 ## 安装
 
+需要 Python 3.9+。
+
 ```bat
-conda activate ask2know
-cd D:\ask2know_framework
 pip install -r requirements.txt
+pip install -e .
 ```
 
-## 新建任务
-
-```bat
-python scripts\init_task.py --name fruit_test3 --classes apple banana pear grape orange --output D:\a2k_test
-```
-
-可以在创建任务时选择特征预设和用户可见特征：
-
-```bat
-python scripts\init_task.py --name fruit_test3 --classes apple banana pear --output D:\a2k_test --feature-preset fruit --features color shape texture surface part size
-```
-
-交通标识类任务可以启用文字和标识特征：
-
-```bat
-python scripts\init_task.py --name sign_test --classes stop turn_left no_entry --output D:\a2k_test --feature-preset traffic_sign --features color shape text sign
-```
-
-用户可选特征包括 `color`、`shape`、`texture`、`surface`、`part`、`size`、`text`、`sign`。`surface` 用来描述绒毛、粗糙表皮、斑点/籽点和反光感；`part` 用来描述果皮、果肉、籽点、果核、切面、瓣状结构和厚皮/瓜皮感。`quality` 是系统内部的样本质量检查，用来判断主体是否清晰、背景是否干扰，不作为用户选择的训练特征展示。`surface`、`part`、`text` 和 `sign` 是轻量 OpenCV 模拟特征，不做真实 OCR、语义分割或完整目标检测。
-
-## 运行内置 demo
-
-第一次运行内置 demo 前先生成示例图片：
-
-```bat
-python scripts\create_demo_dataset.py
-python run_demo.py --config configs\fruit_demo.yaml
-```
-
-## 在旧项目中追加新类别
-
-不要重新建项目。如果你已经有 `D:\a2k_test\fruit_test3`，要加入 cherry：
-
-```bat
-python scripts\add_class.py --project D:\a2k_test\fruit_test3 --class cherry
-```
-
-然后把 cherry 图片放到：
-
-```text
-D:\a2k_test\fruit_test3\datasets\train\cherry
-```
-
-## 运行旧项目继续学习
-
-v0.3.7 默认不弹窗，避免图片查看器卡死。
-
-```bat
-python run_demo.py --config D:\a2k_test\fruit_test3\configs\task_config.yaml
-```
-
-需要预览时才加：
-
-```bat
-python run_demo.py --config D:\a2k_test\fruit_test3\configs\task_config.yaml --preview
-```
-
-## 文件命名规则
-
-- `datasets/unlabeled/` 里的图片可以任意命名，运行时会自动整理为 `img_001.jpg`。
-- `datasets/train/<class>/` 里的图片也可以任意命名，运行时会自动整理为 `class_001.jpg`、`class_002.jpg`。
-- confirmed 后的样本会进入长期训练库 `datasets/train/<class>/`，并顺延编号。
-
-## 错误后追问多选
-
-如果系统把 grape 识别成 apple，用户纠正后，系统会追问为什么错。v0.3.7 支持多选：
-
-```text
-A. 颜色或色系差异明显
-B. 整体形状、结构或轮廓不同
-C. 表面纹理、颗粒感或局部重复结构不同
-D. 单体/聚集结构不同
-E. 表面绒毛、粗糙皮、斑点/籽点或反光不同
-F. 果皮、果肉、籽点、果核、切面或瓣状结构不同
-G. 背景、光线、遮挡影响
-H. 不确定 / 其他原因
-```
-
-可以输入：
-
-```text
-A,B,D
-```
-
-或：
-
-```text
-ABD
-```
-
-## 自我总结
-
-运行结束后会生成：
-
-```text
-outputs/experience_summary.json
-metadata/experience_summary.json
-outputs/class_understanding_summary.json
-outputs/class_understanding_summary.md
-```
-
-这是系统根据错误经验和基础视觉概念形成的弱总结，不是最终真理，但会帮助后续问题生成、概念层设计和经验迁移。
-其中 `class_understanding_summary.md` 面向人工检查，会按类别输出“系统目前认为这个类别更像什么”。
-
-## 基础视觉概念层
-
-v0.3.7 默认启用轻量概念层：
+默认 CLIP 配置：
 
 ```yaml
-concepts:
-  enable: true
-  score_weight: 0.25
+model_name: ViT-B-32
+pretrained: laion2b_s34b_b79k
 ```
 
-系统会从现有 OpenCV 特征中推导基础概念，例如颜色概念、形状概念、纹理/重复结构、主体清晰度和背景干扰。预测时会同时比较类别的特征原型和概念原型；提问时也会尝试用“我看到偏红、接近圆形、有聚集感”这类语言解释自己的观察。
+第一次运行时 OpenCLIP 可能需要下载模型权重。如果当前机器没有网络，也没有本地缓存，初始化会失败。这是 `0.4.1` 的预期行为。
 
-## v0.4.1 CLIP 混合相似度
+## 创建任务
 
-新任务默认包含：
+```bat
+python scripts\init_task.py --name fruit_task --classes apple banana pear --output D:\a2k_test
+```
+
+指定任务预设和用户可见特征：
+
+```bat
+python scripts\init_task.py --name pet_task --classes cat dog --output D:\a2k_test --feature-preset pet --features color shape texture surface part size
+```
+
+可用预设：
+
+- `auto`
+- `general`
+- `fruit`
+- `pet`
+- `traffic_sign`
+
+用户可选特征：
+
+- `color`
+- `shape`
+- `texture`
+- `surface`
+- `part`
+- `size`
+- `text`
+- `sign`
+
+`quality` 是系统内部质量特征，用于判断主体清晰度、背景干扰、模糊和样本是否适合学习，不作为用户可选训练特征展示。
+
+## 放入图片
+
+已知训练图片放到：
+
+```text
+D:\a2k_test\<task_name>\datasets\train\<class_name>
+```
+
+待识别图片放到：
+
+```text
+D:\a2k_test\<task_name>\datasets\unlabeled
+```
+
+图片文件名可以任意。运行时会根据配置自动规范化训练集和待识别图片文件名。
+
+## 运行
+
+```bat
+python run_demo.py --config D:\a2k_test\<task_name>\configs\task_config.yaml
+```
+
+需要手动预览图片时：
+
+```bat
+python run_demo.py --config D:\a2k_test\<task_name>\configs\task_config.yaml --preview
+```
+
+## 关键配置
+
+新任务默认使用 CLIP + hybrid similarity：
 
 ```yaml
 deep_features:
@@ -142,7 +110,9 @@ deep_features:
   pretrained: laion2b_s34b_b79k
   device: auto
   feature_name: image_embedding
+  cache: true
   fallback_to_opencv: false
+  include_augmented: false
 
 similarity:
   mode: hybrid
@@ -150,27 +120,89 @@ similarity:
     enable: true
     k: 3
     score_weight: 0.20
+
+concepts:
+  enable: true
+  score_weight: 0.25
 ```
 
-最终分数由 prototype、kNN 相似样本和概念原型共同构成，其中 embedding 通道来自 CLIP。运行输出会显示 `proto`、`knn`、`concept` 分数来源，并给出最相似训练样本路径，方便人工检查。
+预测结果会显示分数来源，例如：
 
-## 数据增强
-
-v0.3.7 默认启用温和增强，用于建立类别原型：亮度、轻微旋转、轻微裁剪。可以在 `task_config.yaml` 中关闭：
-
-```yaml
-augmentation:
-  enable: false
+```text
+score sources: proto:0.731, knn:0.802, concept:0.744
+nearest: 0.817 D:\...\datasets\train\apple\apple_003.jpg
 ```
 
-## 后续留痕
+含义：
 
-`docs/future_modules.md` 中保留了后续模块规划：
+- `proto`：当前图片和类别原型的相似度。
+- `knn`：当前图片和最近 confirmed 训练样本的相似度。
+- `concept`：当前图片和类别可解释概念原型的相似度。
+- `nearest`：系统认为最相似的已知训练样本。
 
-- crawler_external_candidates：外部候选图片采集，不直接进入 confirmed。
-- visual_concept_layer：全局视觉概念层。
-- deep_feature_adapter：CLIP / ResNet / MobileNet 等深度特征适配器。
+## 用户反馈
 
-## 版本纪律
+系统不确定时，会询问用户可判断的问题，而不是让用户判断 raw embedding。
 
-v0.4.1 起 CLIP 是必需依赖。轻量 OpenCV embedding 仅保留为历史实现，不作为默认或回退路径。
+典型问题包括：
+
+- 颜色是否可靠
+- 形状是否重要
+- 纹理或表面特征是否可靠
+- 部位结构是否重要
+- 文字/标识是否有区分作用
+- 当前图片是否适合加入训练
+
+用户确认或纠错后，系统会更新：
+
+- 特征权重
+- 类别原型
+- CLIP/kNN 证据缓存
+- 类别对混淆经验
+- 样本池
+- 运行日志和总结
+
+## 输出文件
+
+主要输出在任务的 `outputs/` 目录：
+
+```text
+outputs/feature_weights.json
+outputs/internal_feature_weights.json
+outputs/question_weights.json
+outputs/prototype_model.json
+outputs/logs/demo_log.json
+outputs/experience_report.json
+outputs/experience_summary.json
+outputs/class_understanding_summary.json
+outputs/class_understanding_summary.md
+```
+
+样本池和元数据在任务项目目录：
+
+```text
+metadata/
+sample_pools/
+```
+
+## 添加类别
+
+已有任务中追加新类别：
+
+```bat
+python scripts\add_class.py --project D:\a2k_test\fruit_task --class cherry
+```
+
+然后把该类别训练图片放到：
+
+```text
+D:\a2k_test\fruit_task\datasets\train\cherry
+```
+
+## 说明
+
+- Ask2Know 不是大模型训练框架。
+- CLIP 用作必需的图像 embedding 提取器。
+- OpenCV 浅层特征仍然保留，用于可解释提问和概念总结。
+- confirmed 样本进入 `datasets/train/<class>`。
+- candidate、rejected、unknown 样本进入 `sample_pools/`。
