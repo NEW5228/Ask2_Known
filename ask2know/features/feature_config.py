@@ -77,15 +77,15 @@ PRESET_FEATURES = {
 }
 
 DEFAULT_GROUP_WEIGHTS = {
-    'color': 0.28,
-    'shape': 0.32,
-    'texture': 0.25,
-    'surface': 0.16,
-    'part': 0.12,
-    'size': 0.05,
-    'text': 0.18,
-    'sign': 0.28,
-    'embedding': 0.22,
+    'color': 0.03,
+    'shape': 0.03,
+    'texture': 0.03,
+    'surface': 0.03,
+    'part': 0.03,
+    'size': 0.02,
+    'text': 0.03,
+    'sign': 0.03,
+    'embedding': 5.00,
 }
 
 PRESET_DEFAULT_GROUPS = {
@@ -120,10 +120,10 @@ def resolve_deep_feature_config(cfg):
     if isinstance(raw, dict):
         merged.update(raw)
     if not bool(merged.get('enable', True)):
-        raise ValueError('Ask2Know v0.4.1 requires deep_features.enable: true with provider: open_clip.')
+        raise ValueError('Ask2Know v0.4.1.1 requires deep_features.enable: true with provider: open_clip.')
     provider = str(merged.get('provider', 'open_clip')).strip().lower()
     if provider not in ('clip', 'open_clip'):
-        raise ValueError('Ask2Know v0.4.1 requires deep_features.provider: open_clip.')
+        raise ValueError('Ask2Know v0.4.1.1 requires deep_features.provider: open_clip.')
     merged['provider'] = provider
     merged['fallback_to_opencv'] = False
     return merged

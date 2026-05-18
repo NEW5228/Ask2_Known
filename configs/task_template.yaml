@@ -28,7 +28,7 @@ features:
 
 concepts:
   enable: true
-  score_weight: 0.25
+  score_weight: 0.05
 
 deep_features:
   enable: true
@@ -50,21 +50,21 @@ similarity:
 
 learning:
   initial_weights:
-    color: 0.28
-    shape: 0.32
-    texture: 0.25
-    surface: 0.16
-    part: 0.12
-    size: 0.05
-    embedding: 0.22
+    color: 0.03
+    shape: 0.03
+    texture: 0.03
+    surface: 0.03
+    part: 0.03
+    size: 0.02
+    embedding: 5.00
   default_feature_weight: 0.08
   update_step: 0.07
   min_weight: 0.05
-  max_weight: 0.70
+  max_weight: 0.95
 
 confidence:
   auto_accept_threshold: 0.88
-  ask_user_threshold: 0.12
+  ask_user_threshold: 0.03
   global_uncertainty_spread: 0.08
   global_uncertainty_top_n: 5
   saturation_ratio_threshold: 0.65
