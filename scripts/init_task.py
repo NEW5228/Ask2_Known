@@ -15,7 +15,7 @@ from ask2know.features.feature_config import (
     resolve_feature_preset,
 )
 
-VERSION = '0.4.1.1'
+VERSION = '0.4.2'
 
 
 def write_json(path, data):
@@ -104,8 +104,11 @@ sample_pool:
 train_import:
   auto_rename: true
 
-unlabeled_import:
+unknown_import:
   auto_rename: true
+
+unlabeled_import:
+  auto_rename: false
 
 augmentation:
   enable: true
@@ -152,6 +155,7 @@ def main():
     dirs = [
         project_root / 'configs',
         dataset_dir / 'train',
+        dataset_dir / 'unknown',
         dataset_dir / 'unlabeled',
         output_dir,
         project_root / 'experience',
@@ -200,7 +204,7 @@ def main():
     )
 
     readme = project_root / 'README_task.md'
-    readme.write_text(f'''# {task_name}\n\n这个任务由 Ask2Know v{VERSION} 自动创建。\n\n## 放图片\n\n已知样本放入：\n\n```text\n{dataset_dir / 'train'}\n```\n\n未知样本放入：\n\n```text\n{dataset_dir / 'unlabeled'}\n```\n\n## 运行\n\n在 Ask2Know 框架目录执行：\n\n```bat\npython run_demo.py --config {config_path}\n```\n\nv{VERSION} 默认不弹图，避免 Windows 图片查看器占用文件。需要预览时：\n\n```bat\npython run_demo.py --config {config_path} --preview\n```\n''', encoding='utf-8')
+    readme.write_text(f'''# {task_name}\n\n这个任务由 Ask2Know v{VERSION} 自动创建。\n\n## 放图片\n\n已确认训练样本放入：\n\n```text\n{dataset_dir / 'train'}\n```\n\n待学习未知样本放入：\n\n```text\n{dataset_dir / 'unknown'}\n```\n\n验证准确率样本按真实类别放入：\n\n```text\n{dataset_dir / 'unlabeled' / 'class_name'}\n```\n\n## 运行\n\n在 Ask2Know 框架目录执行：\n\n```bat\npython run_demo.py --config {config_path}\n```\n\nv{VERSION} 默认不弹图，避免 Windows 图片查看器占用文件。需要预览时：\n\n```bat\npython run_demo.py --config {config_path} --preview\n```\n''', encoding='utf-8')
 
     print('Ask2Know task created.')
     print('Project:', project_root)
@@ -212,9 +216,11 @@ def main():
     print('1. Put known samples into:')
     for cls in args.classes:
         print(f'   {dataset_dir / "train" / cls}')
-    print('2. Put unknown samples into:')
-    print(f'   {dataset_dir / "unlabeled"}')
-    print('3. Run from the a2k framework folder:')
+    print('2. Put learning/unknown samples into:')
+    print(f'   {dataset_dir / "unknown"}')
+    print('3. Put evaluation samples into labeled folders when needed:')
+    print(f'   {dataset_dir / "unlabeled" / "class_name"}')
+    print('4. Run from the a2k framework folder:')
     print(f'   python run_demo.py --config {config_path}')
 
 

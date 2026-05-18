@@ -1,3 +1,13 @@
+# a2k_v0.4.2 更新日志
+
+## v0.4.2 新增/调整
+
+- 新增 `datasets/unknown/` 作为待学习样本入口。
+- 调整 `datasets/unlabeled/<class>/` 为带真实标签的评估集入口。
+- 新增 `scripts/bootstrap_clusters.py`，支持从 unknown 混合图片聚类建训练集。
+- 新增 `scripts/evaluate_unlabeled.py`，支持基于 unlabeled 评估集输出准确率报告。
+- 项目版本统一升级为 `0.4.2`。
+
 # a2k_v0.4.1.1 更新日志
 
 ## v0.4.1.1 新增/调整

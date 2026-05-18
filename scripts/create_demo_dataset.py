@@ -78,10 +78,13 @@ def main():
         apple(DATA / 'train' / 'apple' / f'apple_{i+1:03d}.jpg', seed=i, radius=58+i%3)
         strawberry(DATA / 'train' / 'strawberry' / f'strawberry_{i+1:03d}.jpg', seed=i)
 
-    apple(DATA / 'unlabeled' / 'unknown_apple_red.jpg', seed=20, radius=62)
-    apple(DATA / 'unlabeled' / 'unknown_apple_small.jpg', seed=21, radius=50, color=(35, 60, 200))
-    strawberry(DATA / 'unlabeled' / 'unknown_strawberry_red.jpg', seed=22)
-    strawberry(DATA / 'unlabeled' / 'unknown_strawberry_big.jpg', seed=23, color=(35, 20, 190))
+    apple(DATA / 'unknown' / 'unknown_apple_red.jpg', seed=20, radius=62)
+    apple(DATA / 'unknown' / 'unknown_apple_small.jpg', seed=21, radius=50, color=(35, 60, 200))
+    strawberry(DATA / 'unknown' / 'unknown_strawberry_red.jpg', seed=22)
+    strawberry(DATA / 'unknown' / 'unknown_strawberry_big.jpg', seed=23, color=(35, 20, 190))
+
+    apple(DATA / 'unlabeled' / 'apple' / 'eval_apple_red.jpg', seed=30, radius=61)
+    strawberry(DATA / 'unlabeled' / 'strawberry' / 'eval_strawberry_red.jpg', seed=31)
 
     print('Demo dataset created:', DATA)
     print('Run: python run_demo.py --config configs/fruit_demo.yaml')

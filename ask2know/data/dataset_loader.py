@@ -10,6 +10,7 @@ class DatasetLoader:
         self.objects_path = self.dataset_dir / 'objects.json'
         self.concepts_path = self.dataset_dir / 'concepts.json'
         self.train_dir = self.dataset_dir / 'train'
+        self.unknown_dir = self.dataset_dir / 'unknown'
         self.unlabeled_dir = self.dataset_dir / 'unlabeled'
 
     def load_objects(self):
@@ -48,10 +49,35 @@ class DatasetLoader:
         return samples
 
     def load_unlabeled_samples(self):
+        return self.load_unknown_samples()
+
+    def load_unknown_samples(self):
+        samples = []
+        if not self.unknown_dir.exists():
+            return samples
+        for img in sorted(self.unknown_dir.rglob('*')):
+            if img.suffix.lower() in IMAGE_EXTS:
+                samples.append({'path': str(img), 'label': None})
+        return samples
+
+    def load_legacy_unlabeled_flat_samples(self):
         samples = []
         if not self.unlabeled_dir.exists():
             return samples
-        for img in sorted(self.unlabeled_dir.rglob('*')):
-            if img.suffix.lower() in IMAGE_EXTS:
+        for img in sorted(self.unlabeled_dir.iterdir()):
+            if img.is_file() and img.suffix.lower() in IMAGE_EXTS:
                 samples.append({'path': str(img), 'label': None})
+        return samples
+
+    def load_eval_samples(self):
+        samples = []
+        if not self.unlabeled_dir.exists():
+            return samples
+        for class_dir in sorted(self.unlabeled_dir.iterdir()):
+            if not class_dir.is_dir():
+                continue
+            label = class_dir.name
+            for img in sorted(class_dir.rglob('*')):
+                if img.suffix.lower() in IMAGE_EXTS:
+                    samples.append({'path': str(img), 'label': label})
         return samples

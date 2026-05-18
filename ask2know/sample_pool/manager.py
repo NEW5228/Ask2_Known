@@ -9,13 +9,13 @@ IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.bmp', '.webp'}
 
 def _safe_name(name):
     text = str(name).strip().replace(' ', '_')
-    text = re.sub(r'[^0-9A-Za-z_\-]+', '_', text)
+    text = re.sub(r'[^\w\-]+', '_', text, flags=re.UNICODE)
     text = re.sub(r'_+', '_', text).strip('_')
     return text or 'unknown'
 
 
 class SamplePoolManager:
-    def __init__(self, project_root=None, output_dir=None, dataset_dir=None, version='0.4.1.1'):
+    def __init__(self, project_root=None, output_dir=None, dataset_dir=None, version='0.4.2'):
         self.version = version
         self.project_root = Path(project_root) if project_root else None
         self.output_dir = Path(output_dir) if output_dir else None
@@ -35,6 +35,7 @@ class SamplePoolManager:
                 self.dataset_dir = self.output_dir / 'datasets'
 
         self.train_dir = self.dataset_dir / 'train'
+        self.learning_unknown_dir = self.dataset_dir / 'unknown'
         self.unlabeled_dir = self.dataset_dir / 'unlabeled'
         self.confirmed_dir = self.train_dir
         self.candidate_dir = self.base_dir / 'candidate'
@@ -44,10 +45,11 @@ class SamplePoolManager:
         self.index_path = self.metadata_dir / 'dataset_index.json'
         self.history_path = self.metadata_dir / 'sample_history.jsonl'
         self.import_map_path = self.metadata_dir / 'unlabeled_import_map.jsonl'
+        self.unknown_import_map_path = self.metadata_dir / 'unknown_import_map.jsonl'
         self.train_normalize_map_path = self.metadata_dir / 'train_normalize_map.jsonl'
         self.project_meta_path = self.metadata_dir / 'project_meta.json'
 
-        for d in [self.train_dir, self.unlabeled_dir, self.candidate_dir, self.rejected_dir, self.unknown_dir, self.processed_dir, self.metadata_dir]:
+        for d in [self.train_dir, self.learning_unknown_dir, self.unlabeled_dir, self.candidate_dir, self.rejected_dir, self.unknown_dir, self.processed_dir, self.metadata_dir]:
             d.mkdir(parents=True, exist_ok=True)
 
     def _load_json(self, path, default):
@@ -180,12 +182,33 @@ class SamplePoolManager:
         shutil.move(str(src), str(dst))
         return str(dst)
 
+    def _copy_file(self, src, dst):
+        src = Path(src)
+        dst = Path(dst)
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(str(src), str(dst))
+        return str(dst)
+
     def add_confirmed(self, image_path, label):
         src = Path(image_path)
         safe, index, next_id, dst = self._class_file_plan(label, src.suffix)
         saved = self._move_file(src, dst)
         self._commit_class_file(safe, index, next_id)
         self._append_history({'action': 'confirmed', 'class': safe, 'old_name': src.name, 'saved_as': saved})
+        return saved
+
+    def copy_confirmed(self, image_path, label, source='bootstrap_cluster'):
+        src = Path(image_path)
+        safe, index, next_id, dst = self._class_file_plan(label, src.suffix)
+        saved = self._copy_file(src, dst)
+        self._commit_class_file(safe, index, next_id)
+        self._append_history({
+            'action': 'confirmed_copy',
+            'source': source,
+            'class': safe,
+            'old_name': src.name,
+            'saved_as': saved,
+        })
         return saved
 
     def add_candidate(self, image_path, label):
@@ -212,18 +235,30 @@ class SamplePoolManager:
         return saved
 
     def normalize_unlabeled(self):
-        """Rename only new/non-standard unlabeled images to img_001, img_002...
+        return self._normalize_flat_images(
+            self.unlabeled_dir,
+            'img',
+            self.import_map_path,
+        )
 
-        Existing img_001 style files are preserved so skipped samples keep stable
-        names between learning rounds.
-        """
-        if not self.unlabeled_dir.exists():
+    def normalize_unknown(self):
+        """Rename new/non-standard learning samples in datasets/unknown."""
+        return self._normalize_flat_images(
+            self.learning_unknown_dir,
+            'unknown',
+            self.unknown_import_map_path,
+        )
+
+    def _normalize_flat_images(self, base_dir, prefix, map_path):
+        """Rename only new/non-standard flat image files in a dataset folder."""
+        base_dir = Path(base_dir)
+        if not base_dir.exists():
             return []
-        files = sorted([p for p in self.unlabeled_dir.iterdir() if p.is_file() and p.suffix.lower() in IMAGE_EXTS])
+        files = sorted([p for p in base_dir.iterdir() if p.is_file() and p.suffix.lower() in IMAGE_EXTS])
         if not files:
             return []
 
-        pattern = re.compile(r'^img_(\d+)\.[^.]+$', re.IGNORECASE)
+        pattern = re.compile(rf'^{re.escape(prefix)}_(\d+)\.[^.]+$', re.IGNORECASE)
         used_ids = set()
         nonstandard = []
         for src in files:
@@ -238,9 +273,9 @@ class SamplePoolManager:
         next_id = max(used_ids) + 1 if used_ids else 1
         temp_files = []
         for i, src in enumerate(nonstandard, 1):
-            temp = self.unlabeled_dir / f'__a2k_tmp_{i:06d}{src.suffix.lower()}'
+            temp = base_dir / f'__a2k_tmp_{i:06d}{src.suffix.lower()}'
             while temp.exists():
-                temp = self.unlabeled_dir / f'__a2k_tmp_{i:06d}_{datetime.now().strftime("%f")}{src.suffix.lower()}'
+                temp = base_dir / f'__a2k_tmp_{i:06d}_{datetime.now().strftime("%f")}{src.suffix.lower()}'
             shutil.move(str(src), str(temp))
             temp_files.append((src, temp))
 
@@ -249,16 +284,16 @@ class SamplePoolManager:
             ext = temp.suffix.lower()
             while next_id in used_ids:
                 next_id += 1
-            dst = self.unlabeled_dir / f'img_{next_id:03d}{ext}'
+            dst = base_dir / f'{prefix}_{next_id:03d}{ext}'
             while dst.exists():
                 used_ids.add(next_id)
                 next_id += 1
-                dst = self.unlabeled_dir / f'img_{next_id:03d}{ext}'
+                dst = base_dir / f'{prefix}_{next_id:03d}{ext}'
             shutil.move(str(temp), str(dst))
             used_ids.add(next_id)
             record = {'old_name': old_src.name, 'new_name': dst.name, 'path': str(dst)}
             mappings.append(record)
-            self._append_jsonl(self.import_map_path, record)
+            self._append_jsonl(map_path, record)
             next_id += 1
         return mappings
 

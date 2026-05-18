@@ -122,3 +122,9 @@ ABD
 augmentation:
   enable: false
 ```
+# Current Dataset Layout
+
+- `datasets/train/<class>/`: confirmed training samples and long-term memory.
+- `datasets/unknown/`: learning samples that Ask2Know should recognize, ask about, cluster, or promote into `train`.
+- `datasets/unlabeled/<class>/`: labeled evaluation samples for accuracy checks. These samples are not used for active learning by `run_demo.py`.
+- `sample_pools/unknown/`: runtime pool for samples the system could not decide; this is separate from `datasets/unknown/`.

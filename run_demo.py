@@ -23,7 +23,7 @@ from ask2know.features.feature_config import (
     summarize_group_weights,
 )
 
-VERSION = '0.4.1.1'
+VERSION = '0.4.2'
 
 
 def open_image_file(image_path):
@@ -212,7 +212,7 @@ def handle_sample_decision(decision, label, sample_path, model, pool, objects, d
         print('保存为:', saved_path)
         return {'decision': 'unknown', 'label': None, 'saved_to': saved_path, 'persisted': True}
 
-    print('已跳过，文件仍保留在 unlabeled。')
+    print('已跳过，文件仍保留在 unknown。')
     return {'decision': 'skip', 'label': None, 'saved_to': None}
 
 
@@ -236,7 +236,7 @@ def _parse_multi_choice(text, valid_keys):
 def ask_correction_reason(predicted_label, true_label, pairwise_manager, adaptive_weights, feature_spec, sample_path=None):
     """Ask why a wrong prediction happened and store pairwise experience.
 
-    v0.4.1.1 supports multi-select answers because real differences often involve
+    v0.4.2 supports multi-select answers because real differences often involve
     color + shape + texture together.
     """
     if not predicted_label or not true_label or predicted_label == true_label:
@@ -539,7 +539,7 @@ def main():
     parser = argparse.ArgumentParser(description='Ask2Know low-sample active teaching demo')
     parser.add_argument('--config', default='configs/fruit_demo.yaml')
     parser.add_argument('--preview', action='store_true', help='手动开启图片预览。默认关闭，避免 Windows 图片查看器占用文件导致卡死')
-    parser.add_argument('--no-preview', action='store_true', help='兼容旧参数；v0.4.1.1 默认就是不预览')
+    parser.add_argument('--no-preview', action='store_true', help='兼容旧参数；v0.4.2 默认就是不预览')
     args = parser.parse_args()
 
     cfg = load_yaml(args.config)
@@ -569,13 +569,20 @@ def main():
         if train_renamed:
             print(f'已自动规范化 train 图片命名：{len(train_renamed)} 张。')
 
-    if cfg.get('unlabeled_import', {}).get('auto_rename', True):
-        renamed = pool.normalize_unlabeled()
+    unknown_import_cfg = cfg.get('unknown_import', cfg.get('unlabeled_import', {'auto_rename': True}))
+    if unknown_import_cfg.get('auto_rename', True):
+        renamed = pool.normalize_unknown()
         if renamed:
-            print(f'已自动规范化 unlabeled 图片命名：{len(renamed)} 张。')
+            print(f'Normalized unknown learning images: {len(renamed)}')
 
     train_samples = loader.load_train_samples()
-    unlabeled = loader.load_unlabeled_samples()
+    unlabeled = loader.load_unknown_samples()
+    if not unlabeled:
+        legacy_unlabeled = loader.load_legacy_unlabeled_flat_samples()
+        if legacy_unlabeled:
+            print('Compatibility notice: flat datasets/unlabeled images are no longer used for active learning.')
+            print(f'Please move learning samples to: {Path(dataset_dir) / "unknown"}')
+            print('datasets/unlabeled is now reserved for labeled evaluation folders such as unlabeled/class_a/.')
 
     if not objects:
         print('没有找到对象类别。请先运行 init_task 自动创建任务。')
@@ -587,7 +594,7 @@ def main():
         return
     if not unlabeled:
         print('没有找到待识别样本。')
-        print(f'请把未知图片放到：{Path(dataset_dir) / "unlabeled"}')
+        print(f'请把待学习未知图片放到：{Path(dataset_dir) / "unknown"}')
         return
 
 
@@ -601,7 +608,7 @@ def main():
     if project_root:
         print('项目目录:', project_root)
     print('对象类别:', ', '.join(class_names(objects)))
-    print(f'训练样本数: {len(train_samples)}，待识别样本数: {len(unlabeled)}')
+    print(f'训练样本数: {len(train_samples)}，待学习 unknown 样本数: {len(unlabeled)}')
     print('启用特征:', ', '.join(display_features))
     if system_feature_names:
         print('系统质量检查:', ', '.join(system_feature_names))

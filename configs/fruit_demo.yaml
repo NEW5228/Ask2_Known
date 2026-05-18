@@ -81,8 +81,11 @@ sample_pool:
 train_import:
   auto_rename: true
 
-unlabeled_import:
+unknown_import:
   auto_rename: true
+
+unlabeled_import:
+  auto_rename: false
 
 augmentation:
   enable: true

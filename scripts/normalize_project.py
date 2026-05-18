@@ -11,7 +11,7 @@ from ask2know.data.dataset_loader import DatasetLoader
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Normalize train/unlabeled filenames in an existing a2k project.')
+    parser = argparse.ArgumentParser(description='Normalize train/unknown filenames in an existing a2k project.')
     parser.add_argument('--config', required=True, help='项目 task_config.yaml')
     args = parser.parse_args()
     with open(args.config, 'r', encoding='utf-8') as f:
@@ -22,12 +22,12 @@ def main():
     loader = DatasetLoader(dataset_dir)
     objects = loader.load_objects()
     labels = [o['name'] for o in objects]
-    pool = SamplePoolManager(project_root=project_root, output_dir=output_dir, dataset_dir=dataset_dir, version='0.4.1.1')
+    pool = SamplePoolManager(project_root=project_root, output_dir=output_dir, dataset_dir=dataset_dir, version='0.4.2')
     pool.ensure_for_classes(labels)
     changed_train = pool.normalize_train_images(labels)
-    changed_unlabeled = pool.normalize_unlabeled()
+    changed_unknown = pool.normalize_unknown()
     print('训练集重命名:', len(changed_train))
-    print('未标注集重命名:', len(changed_unlabeled))
+    print('待学习 unknown 集重命名:', len(changed_unknown))
     print('metadata:', pool.metadata_dir)
 
 

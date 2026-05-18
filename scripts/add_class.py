@@ -48,7 +48,7 @@ def main():
             'object_id': f'C{len(objects) + 1:03d}',
             'name': cls,
             'display_name': cls,
-            'description': 'added by add_class v0.4.1.1'
+                'description': 'added by add_class v0.4.2'
         })
         save_json(objects_path, objects_data)
 
@@ -65,15 +65,16 @@ def main():
         cfg['paths']['dataset_dir'] = str(dataset_dir).replace('\\', '/')
         cfg['paths']['output_dir'] = str((project / 'outputs')).replace('\\', '/')
         cfg.setdefault('train_import', {})['auto_rename'] = True
-        cfg.setdefault('unlabeled_import', {})['auto_rename'] = True
+        cfg.setdefault('unknown_import', {})['auto_rename'] = True
+        cfg.setdefault('unlabeled_import', {})['auto_rename'] = False
         with open(config_path, 'w', encoding='utf-8') as f:
             yaml.safe_dump(cfg, f, allow_unicode=True, sort_keys=False)
     else:
         print('未找到 task_config.yaml。请先确认这是 a2k 项目目录。')
 
     meta = load_json(metadata_dir / 'project_meta.json', {})
-    meta['last_used_by'] = 'a2k_v0.4.1.1'
-    meta['schema_version'] = '0.4.1.1'
+    meta['last_used_by'] = 'a2k_v0.4.2'
+    meta['schema_version'] = '0.4.2'
     meta['classes'] = sorted(set((meta.get('classes') or []) + [cls]))
     save_json(metadata_dir / 'project_meta.json', meta)
 
