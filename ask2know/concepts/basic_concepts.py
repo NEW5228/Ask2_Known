@@ -46,6 +46,14 @@ CONCEPT_NAMES = [
     'sign_like',
     'arrow_like',
     'prohibition_like',
+    'fur_like',
+    'pet_outline',
+    'face_like',
+    'eye_pair_like',
+    'muzzle_like',
+    'nose_like',
+    'whisker_like',
+    'top_ear_like',
 ]
 
 DISPLAY_NAMES = {
@@ -93,6 +101,18 @@ DISPLAY_NAMES = {
     'arrow_like': '像箭头标识',
     'prohibition_like': '像禁止标识',
 }
+
+
+DISPLAY_NAMES.update({
+    'fur_like': 'fur-like texture',
+    'pet_outline': 'pet-like outline',
+    'face_like': 'animal face-like',
+    'eye_pair_like': 'eye-pair-like',
+    'muzzle_like': 'muzzle-like',
+    'nose_like': 'nose-like',
+    'whisker_like': 'whisker-like',
+    'top_ear_like': 'upright-ear-like',
+})
 
 
 def _clip01(value):
@@ -192,6 +212,30 @@ def concepts_from_features(features):
         concepts['segment_like'] = _activate(fruit_part[5], 0.50, 0.90)
         concepts['rind_like'] = _activate(fruit_part[6], 0.45, 0.90)
 
+    animal_shape = _safe_array(features.get('animal_shape'))
+    if animal_shape.size >= 9:
+        concepts['pet_outline'] = _clip01(animal_shape[0])
+        concepts['top_ear_like'] = max(concepts['top_ear_like'], _clip01(animal_shape[1]))
+        concepts['single_object'] = max(concepts['single_object'], _clip01(animal_shape[5]))
+
+    fur_texture = _safe_array(features.get('fur_texture'))
+    if fur_texture.size >= 8:
+        concepts['fur_like'] = _clip01(fur_texture[0])
+        concepts['edge_rich'] = max(concepts['edge_rich'], _clip01(fur_texture[1]))
+        concepts['texture_rich'] = max(
+            concepts['texture_rich'],
+            _clip01(0.36 * fur_texture[1] + 0.32 * fur_texture[2] + 0.32 * fur_texture[3]),
+        )
+
+    animal_face = _safe_array(features.get('animal_face'))
+    if animal_face.size >= 10:
+        concepts['face_like'] = _clip01(animal_face[0])
+        concepts['eye_pair_like'] = _clip01(animal_face[2])
+        concepts['muzzle_like'] = _clip01(animal_face[4])
+        concepts['nose_like'] = _clip01(animal_face[6])
+        concepts['whisker_like'] = _clip01(animal_face[7])
+        concepts['top_ear_like'] = max(concepts['top_ear_like'], _clip01(animal_face[8]))
+
     quality = _safe_array(features.get('quality'))
     if quality.size >= 2:
         area_ratio = _clip01(quality[0])
@@ -220,7 +264,10 @@ def concepts_from_features(features):
     )
     concepts['cluster_like'] = cluster_signal
     concepts['repeated_parts'] = _clip01(0.75 * cluster_signal + 0.25 * concepts['edge_rich'])
-    concepts['single_object'] = _clip01((1.0 - cluster_signal) * (0.55 + 0.45 * concepts['clear_foreground']))
+    concepts['single_object'] = max(
+        concepts['single_object'],
+        _clip01((1.0 - cluster_signal) * (0.55 + 0.45 * concepts['clear_foreground'])),
+    )
     return concepts
 
 

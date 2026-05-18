@@ -577,6 +577,242 @@ def fruit_part_feature(img, mask):
     ], dtype=np.float32)
 
 
+def animal_shape_feature(img, mask):
+    mask = _largest_component_mask(mask)
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return np.zeros(9, dtype=np.float32)
+
+    c = max(contours, key=cv2.contourArea)
+    area = max(1.0, cv2.contourArea(c))
+    peri = max(1.0, cv2.arcLength(c, True))
+    x, y, w, h = cv2.boundingRect(c)
+    aspect = float(w) / max(1.0, float(h))
+    circularity = min(4 * np.pi * area / (peri * peri + 1e-6), 1.0)
+    solidity = area / max(1.0, cv2.contourArea(cv2.convexHull(c)))
+    elongated = min((max(aspect, 1.0 / max(aspect, 1e-6)) - 1.0) / 2.5, 1.0)
+
+    roi = mask[y:y+h, x:x+w]
+    if roi.size == 0 or h < 6 or w < 6:
+        top_protrusion = top_balance = head_body_ratio = symmetry = 0.0
+        lower_bulk = upper_bulk = 0.0
+    else:
+        top = roi[:max(1, h // 3), :]
+        mid = roi[max(1, h // 3):max(2, (2 * h) // 3), :]
+        bottom = roi[max(2, (2 * h) // 3):, :]
+        top_area = cv2.countNonZero(top) / max(1.0, float(top.size))
+        mid_area = cv2.countNonZero(mid) / max(1.0, float(mid.size))
+        bottom_area = cv2.countNonZero(bottom) / max(1.0, float(bottom.size))
+        upper_bulk = min(top_area / max(mid_area, 1e-6), 1.0)
+        lower_bulk = min(bottom_area / max(mid_area, 1e-6), 1.0)
+        head_body_ratio = min((top_area + 0.5 * mid_area) / max(bottom_area + 0.5 * mid_area, 1e-6), 1.0)
+
+        top_cols = np.where(top.max(axis=0) > 0)[0]
+        mid_cols = np.where(mid.max(axis=0) > 0)[0]
+        if top_cols.size and mid_cols.size:
+            top_width = (top_cols[-1] - top_cols[0] + 1) / max(1.0, float(w))
+            mid_width = (mid_cols[-1] - mid_cols[0] + 1) / max(1.0, float(w))
+            left_top = (top[:, :w // 2].max(axis=0) > 0).sum() / max(1.0, float(w // 2))
+            right_top = (top[:, w // 2:].max(axis=0) > 0).sum() / max(1.0, float(w - w // 2))
+            top_balance = 1.0 - min(abs(left_top - right_top), 1.0)
+            top_protrusion = min(max(mid_width - top_width, 0.0) * 2.4 + max(left_top, right_top) * 0.35, 1.0)
+        else:
+            top_protrusion = top_balance = 0.0
+
+        flipped = cv2.flip(roi, 1)
+        overlap = cv2.countNonZero(cv2.bitwise_and(roi, flipped))
+        union = cv2.countNonZero(cv2.bitwise_or(roi, flipped))
+        symmetry = float(overlap) / max(1.0, float(union))
+
+    compact_body = min(0.50 * circularity + 0.30 * min(solidity, 1.0) + 0.20 * (1.0 - elongated), 1.0)
+    pet_outline = min(0.34 * compact_body + 0.26 * top_protrusion + 0.22 * symmetry + 0.18 * head_body_ratio, 1.0)
+    return np.array([
+        pet_outline,
+        top_protrusion,
+        top_balance,
+        head_body_ratio,
+        symmetry,
+        compact_body,
+        elongated,
+        upper_bulk,
+        lower_bulk,
+    ], dtype=np.float32)
+
+
+def fur_texture_feature(img, mask):
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    vals = gray[mask > 0]
+    pixels = hsv[mask > 0]
+    if vals.size == 0 or pixels.size == 0:
+        return np.zeros(8, dtype=np.float32)
+
+    masked_area = max(1.0, float(cv2.countNonZero(mask)))
+    edges = cv2.Canny(gray, 30, 110)
+    edge_density = float(cv2.countNonZero(cv2.bitwise_and(edges, edges, mask=mask))) / masked_area
+    lap = cv2.Laplacian(gray, cv2.CV_64F)
+    lap_var = min(float(lap[mask > 0].var()) / 1200.0, 1.0)
+    local_mean = cv2.blur(gray, (5, 5))
+    local_delta = cv2.absdiff(gray, local_mean)
+    fine_contrast = min(float(local_delta[mask > 0].mean()) / 34.0, 1.0)
+
+    sobel_x = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
+    sobel_y = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
+    mag = cv2.magnitude(sobel_x, sobel_y)
+    angle = cv2.phase(sobel_x, sobel_y, angleInDegrees=True)
+    selected = (mask > 0) & (mag > np.percentile(mag[mask > 0], 58))
+    if selected.any():
+        hist, _ = np.histogram(angle[selected] % 180.0, bins=6, range=(0.0, 180.0), weights=mag[selected])
+        orientation_strength = float(hist.max() / (hist.sum() + 1e-8))
+    else:
+        orientation_strength = 0.0
+
+    h = pixels[:, 0]
+    s = pixels[:, 1]
+    v = pixels[:, 2]
+    dark_fur = ((v < 105) & (s < 190)).sum() / max(1, pixels.shape[0])
+    light_fur = ((v > 175) & (s < 95)).sum() / max(1, pixels.shape[0])
+    brown_fur = ((h >= 5) & (h < 35) & (s > 25) & (v > 35) & (v < 190)).sum() / max(1, pixels.shape[0])
+    fur_like = min(
+        0.30 * min(edge_density * 5.5, 1.0)
+        + 0.25 * fine_contrast
+        + 0.20 * lap_var
+        + 0.15 * orientation_strength
+        + 0.10 * min((dark_fur + light_fur + brown_fur) * 1.7, 1.0),
+        1.0,
+    )
+    return np.array([
+        fur_like,
+        min(edge_density * 5.5, 1.0),
+        lap_var,
+        fine_contrast,
+        orientation_strength,
+        dark_fur,
+        light_fur,
+        brown_fur,
+    ], dtype=np.float32)
+
+
+def animal_face_feature(img, mask):
+    mask = _largest_component_mask(mask)
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    ys, xs = np.where(mask > 0)
+    if xs.size == 0:
+        return np.zeros(10, dtype=np.float32)
+
+    x, y, w, h = cv2.boundingRect(mask)
+    roi_mask = mask[y:y+h, x:x+w]
+    roi_gray = gray[y:y+h, x:x+w]
+    roi_hsv = hsv[y:y+h, x:x+w]
+    if roi_mask.size == 0 or h < 12 or w < 12:
+        return np.zeros(10, dtype=np.float32)
+
+    flipped = cv2.flip(roi_mask, 1)
+    overlap = cv2.countNonZero(cv2.bitwise_and(roi_mask, flipped))
+    union = cv2.countNonZero(cv2.bitwise_or(roi_mask, flipped))
+    symmetry = float(overlap) / max(1.0, float(union))
+
+    upper_mask = np.zeros_like(roi_mask)
+    upper_mask[:max(1, int(h * 0.58)), :] = roi_mask[:max(1, int(h * 0.58)), :]
+    center_mask = np.zeros_like(roi_mask)
+    x0, x1 = int(w * 0.30), int(w * 0.70)
+    y0, y1 = int(h * 0.34), int(h * 0.74)
+    center_mask[y0:y1, x0:x1] = roi_mask[y0:y1, x0:x1]
+
+    _, dark = cv2.threshold(roi_gray, 88, 255, cv2.THRESH_BINARY_INV)
+    dark = cv2.bitwise_and(dark, dark, mask=upper_mask)
+    component_count, _, stats, centers = cv2.connectedComponentsWithStats(dark, 8)
+    eye_candidates = []
+    masked_area = max(1.0, float(cv2.countNonZero(roi_mask)))
+    for idx in range(1, component_count):
+        area = float(stats[idx, cv2.CC_STAT_AREA])
+        if area < 2 or area > masked_area * 0.035:
+            continue
+        cx, cy = centers[idx]
+        if cy > h * 0.62:
+            continue
+        eye_candidates.append((float(cx), float(cy), area))
+
+    eye_pair = 0.0
+    eye_balance = 0.0
+    for i, left in enumerate(eye_candidates):
+        for right in eye_candidates[i + 1:]:
+            x_left, y_left, a_left = left
+            x_right, y_right, a_right = right
+            dx = abs(x_right - x_left) / max(1.0, float(w))
+            dy = abs(y_right - y_left) / max(1.0, float(h))
+            if dx < 0.16 or dx > 0.62 or dy > 0.16:
+                continue
+            area_balance = 1.0 - min(abs(a_left - a_right) / max(a_left, a_right, 1.0), 1.0)
+            center_balance = 1.0 - min(abs(((x_left + x_right) * 0.5 / max(1.0, float(w))) - 0.5) * 2.0, 1.0)
+            candidate_score = min(0.45 * (dx / 0.62) + 0.30 * area_balance + 0.25 * center_balance, 1.0)
+            if candidate_score > eye_pair:
+                eye_pair = candidate_score
+                eye_balance = min(0.55 * area_balance + 0.45 * center_balance, 1.0)
+
+    center_vals = roi_hsv[center_mask > 0]
+    all_vals = roi_hsv[roi_mask > 0]
+    if center_vals.size and all_vals.size:
+        center_mean = center_vals.mean(axis=0).astype(np.float32)
+        all_mean = all_vals.mean(axis=0).astype(np.float32)
+        muzzle_contrast = min(float(np.linalg.norm((center_mean - all_mean) / np.array([90.0, 128.0, 128.0], dtype=np.float32))) / 1.1, 1.0)
+        center_v = center_vals[:, 2]
+        center_s = center_vals[:, 1]
+        muzzle_light = ((center_v > 150) & (center_s < 115)).sum() / max(1, center_vals.shape[0])
+        nose_dark = (center_v < 75).sum() / max(1, center_vals.shape[0])
+    else:
+        muzzle_contrast = muzzle_light = nose_dark = 0.0
+    muzzle_like = min(0.45 * muzzle_contrast + 0.30 * muzzle_light + 0.25 * nose_dark * 2.0, 1.0)
+
+    edges = cv2.Canny(roi_gray, 35, 120)
+    edge_center = cv2.bitwise_and(edges, edges, mask=center_mask)
+    lines = cv2.HoughLinesP(edge_center, 1, np.pi / 180, threshold=12, minLineLength=max(8, w // 10), maxLineGap=4)
+    horizontal_lines = 0
+    total_lines = 0
+    if lines is not None:
+        for line in lines[:, 0, :]:
+            x1, y1, x2, y2 = [float(v) for v in line]
+            angle = abs(float(np.degrees(np.arctan2(y2 - y1, x2 - x1))))
+            total_lines += 1
+            if angle < 22 or angle > 158:
+                horizontal_lines += 1
+    whisker_like = min((horizontal_lines / max(1, total_lines)) * min(total_lines / 6.0, 1.0), 1.0)
+
+    top_mask = roi_mask[:max(1, int(h * 0.25)), :]
+    mid_mask = roi_mask[max(1, int(h * 0.25)):max(2, int(h * 0.55)), :]
+    top_cols = np.where(top_mask.max(axis=0) > 0)[0]
+    mid_cols = np.where(mid_mask.max(axis=0) > 0)[0]
+    if top_cols.size and mid_cols.size:
+        top_width = (top_cols[-1] - top_cols[0] + 1) / max(1.0, float(w))
+        mid_width = (mid_cols[-1] - mid_cols[0] + 1) / max(1.0, float(w))
+        ear_like = min(max(mid_width - top_width, 0.0) * 2.8 + top_width * 0.25, 1.0)
+    else:
+        ear_like = 0.0
+
+    face_like = min(
+        0.25 * symmetry
+        + 0.22 * eye_pair
+        + 0.18 * muzzle_like
+        + 0.14 * ear_like
+        + 0.11 * whisker_like
+        + 0.10 * eye_balance,
+        1.0,
+    )
+    return np.array([
+        face_like,
+        symmetry,
+        eye_pair,
+        eye_balance,
+        muzzle_like,
+        muzzle_contrast,
+        nose_dark,
+        whisker_like,
+        ear_like,
+        min(len(eye_candidates) / 8.0, 1.0),
+    ], dtype=np.float32)
+
+
 def text_mark_feature(img, mask):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     masked_area = max(1.0, float(cv2.countNonZero(mask)))
@@ -734,6 +970,9 @@ def extract_features_from_image(img):
         'fruit_structure': fruit_structure_feature(img, mask),
         'surface_mark': surface_mark_feature(img, mask),
         'fruit_part': fruit_part_feature(img, mask),
+        'animal_shape': animal_shape_feature(img, mask),
+        'fur_texture': fur_texture_feature(img, mask),
+        'animal_face': animal_face_feature(img, mask),
         'text_mark': text_mark_feature(img, mask),
         'sign_symbol': sign_symbol_feature(img, mask),
     }

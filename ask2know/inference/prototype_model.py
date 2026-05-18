@@ -8,10 +8,17 @@ CONCEPTS_BY_GROUP = {
         'red', 'orange', 'yellow', 'green', 'cyan', 'blue', 'purple', 'pink',
         'brown', 'black', 'white', 'gray', 'color_family', 'dark', 'bright',
     },
-    'shape': {'round', 'elongated', 'pear_like', 'rectangular_like', 'single_object', 'cluster_like', 'repeated_parts'},
-    'texture': {'smooth_surface', 'texture_rich', 'edge_rich', 'cluster_like', 'repeated_parts'},
-    'surface': {'fuzzy_surface', 'rough_peel', 'speckled_surface', 'glossy_surface'},
-    'part': {'peel_like', 'flesh_like', 'cut_surface', 'seed_like', 'core_like', 'segment_like', 'rind_like'},
+    'shape': {
+        'round', 'elongated', 'pear_like', 'rectangular_like', 'single_object',
+        'cluster_like', 'repeated_parts', 'pet_outline', 'top_ear_like',
+    },
+    'texture': {'smooth_surface', 'texture_rich', 'edge_rich', 'cluster_like', 'repeated_parts', 'fur_like'},
+    'surface': {'fuzzy_surface', 'rough_peel', 'speckled_surface', 'glossy_surface', 'fur_like'},
+    'part': {
+        'peel_like', 'flesh_like', 'cut_surface', 'seed_like', 'core_like',
+        'segment_like', 'rind_like', 'face_like', 'eye_pair_like',
+        'muzzle_like', 'nose_like', 'whisker_like', 'top_ear_like',
+    },
     'quality': {'clear_foreground', 'background_interference'},
     'text': {'text_like', 'character_parts'},
     'sign': {'sign_like', 'arrow_like', 'prohibition_like'},
@@ -221,6 +228,12 @@ class PrototypeModel:
             return _vector_similarity(a, b, scale=5.0)
         if name == 'fruit_part':
             return _vector_similarity(a, b, scale=5.1)
+        if name == 'animal_shape':
+            return _vector_similarity(a, b, scale=5.0)
+        if name == 'fur_texture':
+            return _vector_similarity(a, b, scale=4.9)
+        if name == 'animal_face':
+            return _vector_similarity(a, b, scale=5.3)
         if name == 'text_mark':
             return _vector_similarity(a, b, scale=5.0)
         if name == 'sign_symbol':

@@ -111,7 +111,7 @@ def main():
     parser.add_argument('--name', required=True, help='任务名，例如 fruit_task 或 vehicle_brand_demo')
     parser.add_argument('--classes', nargs='+', required=True, help='类别名，例如 apple banana pear 或 bmw audi benz')
     parser.add_argument('--output', default='.', help='任务输出根目录，例如 D:\\a2k_test。默认当前目录')
-    parser.add_argument('--feature-preset', choices=['auto', 'general', 'fruit', 'traffic_sign'], default='auto', help='特征预设。auto 会根据类别名判断是否使用 fruit 或 traffic_sign。')
+    parser.add_argument('--feature-preset', choices=['auto', 'general', 'fruit', 'pet', 'traffic_sign'], default='auto', help='特征预设。auto 会根据类别名判断是否使用 fruit、pet 或 traffic_sign。')
     parser.add_argument('--features', nargs='+', choices=list(USER_FEATURE_GROUPS), default=None, help='用户可选特征大类。quality 是系统质量检查，不在这里选择。')
     args = parser.parse_args()
 

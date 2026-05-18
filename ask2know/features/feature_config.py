@@ -14,6 +14,12 @@ TRAFFIC_SIGN_CLASS_NAMES = {
     'warning', 'arrow', 'left_arrow', 'right_arrow', 'traffic_sign',
 }
 
+PET_CLASS_NAMES = {
+    'cat', 'dog', 'kitten', 'puppy', 'feline', 'canine', 'pet', 'pets',
+    'cats', 'dogs', 'cat_dog', 'animal',
+    '猫', '狗', '小猫', '小狗', '宠物', '动物',
+}
+
 PRESET_FEATURES = {
     'general': {
         'color': ['color'],
@@ -31,6 +37,16 @@ PRESET_FEATURES = {
         'texture': ['texture', 'fruit_texture'],
         'surface': ['surface_mark'],
         'part': ['fruit_part'],
+        'size': ['size'],
+        'text': ['text_mark'],
+        'sign': ['sign_symbol'],
+    },
+    'pet': {
+        'color': ['color'],
+        'shape': ['contour', 'animal_shape'],
+        'texture': ['texture', 'fur_texture'],
+        'surface': ['surface_mark'],
+        'part': ['animal_face'],
         'size': ['size'],
         'text': ['text_mark'],
         'sign': ['sign_symbol'],
@@ -61,6 +77,7 @@ DEFAULT_GROUP_WEIGHTS = {
 PRESET_DEFAULT_GROUPS = {
     'general': ('color', 'shape', 'texture', 'surface', 'size'),
     'fruit': ('color', 'shape', 'texture', 'surface', 'part', 'size'),
+    'pet': ('color', 'shape', 'texture', 'surface', 'part', 'size'),
     'traffic_sign': ('color', 'shape', 'text', 'sign'),
 }
 
@@ -69,6 +86,8 @@ def infer_feature_preset(classes):
     names = {str(name).strip().lower() for name in (classes or [])}
     if names & TRAFFIC_SIGN_CLASS_NAMES:
         return 'traffic_sign'
+    if names & PET_CLASS_NAMES:
+        return 'pet'
     return 'fruit' if names & FRUIT_CLASS_NAMES else 'general'
 
 
@@ -77,7 +96,7 @@ def resolve_feature_preset(preset, classes=None):
     if preset == 'auto':
         return infer_feature_preset(classes)
     if preset not in PRESET_FEATURES:
-        raise ValueError(f'Unsupported feature preset: {preset}. Use auto, general, fruit, or traffic_sign.')
+        raise ValueError(f'Unsupported feature preset: {preset}. Use auto, general, fruit, pet, or traffic_sign.')
     return preset
 
 
