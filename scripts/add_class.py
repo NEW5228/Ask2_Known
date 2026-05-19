@@ -3,6 +3,10 @@ import json
 from pathlib import Path
 import yaml
 
+from ask2know.sample_pool.manager import _safe_name
+
+VERSION = '0.4.2.1'
+
 
 def load_json(path, default):
     path = Path(path)
@@ -30,6 +34,8 @@ def main():
     if not cls:
         raise SystemExit('类别名不能为空')
 
+    storage_name = _safe_name(cls)
+
     dataset_dir = project / 'datasets'
     train_dir = dataset_dir / 'train'
     config_path = project / 'configs' / 'task_config.yaml'
@@ -38,17 +44,17 @@ def main():
     metadata_dir = project / 'metadata'
     metadata_dir.mkdir(parents=True, exist_ok=True)
 
-    (train_dir / cls).mkdir(parents=True, exist_ok=True)
+    (train_dir / storage_name).mkdir(parents=True, exist_ok=True)
 
     objects_data = load_json(objects_path, {'objects': []})
     objects = objects_data.setdefault('objects', [])
     names = [o.get('name') for o in objects]
-    if cls not in names:
+    if storage_name not in names:
         objects.append({
             'object_id': f'C{len(objects) + 1:03d}',
-            'name': cls,
+            'name': storage_name,
             'display_name': cls,
-                'description': 'added by add_class v0.4.2'
+            'description': f'added by add_class v{VERSION}'
         })
         save_json(objects_path, objects_data)
 
@@ -59,8 +65,8 @@ def main():
         with open(config_path, 'r', encoding='utf-8') as f:
             cfg = yaml.safe_load(f) or {}
         classes = cfg.setdefault('classes', [])
-        if cls not in classes:
-            classes.append(cls)
+        if storage_name not in classes:
+            classes.append(storage_name)
         cfg.setdefault('paths', {})['project_root'] = str(project).replace('\\', '/')
         cfg['paths']['dataset_dir'] = str(dataset_dir).replace('\\', '/')
         cfg['paths']['output_dir'] = str((project / 'outputs')).replace('\\', '/')
@@ -73,15 +79,16 @@ def main():
         print('未找到 task_config.yaml。请先确认这是 a2k 项目目录。')
 
     meta = load_json(metadata_dir / 'project_meta.json', {})
-    meta['last_used_by'] = 'a2k_v0.4.2'
-    meta['schema_version'] = '0.4.2'
-    meta['classes'] = sorted(set((meta.get('classes') or []) + [cls]))
+    meta['last_used_by'] = f'a2k_v{VERSION}'
+    meta['schema_version'] = VERSION
+    meta['classes'] = sorted(set((meta.get('classes') or []) + [storage_name]))
     save_json(metadata_dir / 'project_meta.json', meta)
 
     print('已在项目中添加类别，不会删除已有数据。')
     print('项目:', project)
     print('新类别:', cls)
-    print('请把该类别训练图片放入:', train_dir / cls)
+    print('存储类别名:', storage_name)
+    print('请把该类别训练图片放入:', train_dir / storage_name)
     print('运行时使用:', config_path)
 
 

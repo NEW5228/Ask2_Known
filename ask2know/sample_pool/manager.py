@@ -15,7 +15,7 @@ def _safe_name(name):
 
 
 class SamplePoolManager:
-    def __init__(self, project_root=None, output_dir=None, dataset_dir=None, version='0.4.2'):
+    def __init__(self, project_root=None, output_dir=None, dataset_dir=None, version='0.4.2.1'):
         self.version = version
         self.project_root = Path(project_root) if project_root else None
         self.output_dir = Path(output_dir) if output_dir else None
@@ -118,19 +118,29 @@ class SamplePoolManager:
                     max_id = max(max_id, int(m.group(1)))
         return {'next_id': max_id + 1 if max_id else count + 1, 'count': count}
 
+    def _class_index_record(self, label, scanned=None, existing=None):
+        safe = _safe_name(label)
+        scanned = dict(scanned or self._scan_class_state(safe))
+        existing = dict(existing or {})
+        return {
+            'storage_name': safe,
+            'label': existing.get('label', str(label)),
+            'display_name': existing.get('display_name', str(label)),
+            'next_id': max(int(existing.get('next_id', 1)), int(scanned.get('next_id', 1))),
+            'count': max(int(existing.get('count', 0)), int(scanned.get('count', 0))),
+        }
+
     def ensure_for_classes(self, labels):
         index = self._load_index()
         for label in labels:
             safe = _safe_name(label)
             (self.train_dir / safe).mkdir(parents=True, exist_ok=True)
             scanned = self._scan_class_state(safe)
-            if safe not in index['classes']:
-                index['classes'][safe] = scanned
-            else:
-                current = index['classes'][safe]
-                current['next_id'] = max(int(current.get('next_id', 1)), int(scanned.get('next_id', 1)))
-                current['count'] = max(int(current.get('count', 0)), int(scanned.get('count', 0)))
-                index['classes'][safe] = current
+            index['classes'][safe] = self._class_index_record(
+                label,
+                scanned=scanned,
+                existing=index['classes'].get(safe),
+            )
         self._save_index(index)
         return index
 
@@ -138,15 +148,21 @@ class SamplePoolManager:
         index = {'schema_version': self.version, 'classes': {}}
         if self.train_dir.exists():
             for class_dir in sorted([p for p in self.train_dir.iterdir() if p.is_dir()]):
-                index['classes'][class_dir.name] = self._scan_class_state(class_dir.name)
+                index['classes'][class_dir.name] = self._class_index_record(
+                    class_dir.name,
+                    scanned=self._scan_class_state(class_dir.name),
+                )
         self._save_index(index)
         return index
 
     def _class_file_plan(self, label, ext):
         safe = _safe_name(label)
         index = self._load_index()
-        if safe not in index['classes']:
-            index['classes'][safe] = self._scan_class_state(safe)
+        index['classes'][safe] = self._class_index_record(
+            label,
+            scanned=self._scan_class_state(safe),
+            existing=index['classes'].get(safe),
+        )
         next_id = int(index['classes'][safe].get('next_id', 1))
         dst_dir = self.train_dir / safe
         dst_dir.mkdir(parents=True, exist_ok=True)

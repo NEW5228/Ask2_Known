@@ -1,3 +1,14 @@
+# a2k_v0.4.2.1 更新日志
+
+## v0.4.2.1 修复
+
+- 修复 deep feature 缓存键未包含 CLIP 模型和权重配置的问题，避免切换 `model_name` 或 `pretrained` 后复用旧 embedding。
+- 修复 `bootstrap_clusters.py` 未复用 embedding path cache 的问题，粗分 unknown 图片时会优先走 `DeepFeatureAdapter.extract_path()`。
+- 修复 bootstrap 更新项目元数据时只保留本次映射类别、可能丢失既有类别的问题。
+- 增强样本池类别索引，记录 `storage_name`、原始 `label` 和 `display_name`，降低带空格/特殊字符类别名造成目录名和显示名混淆的风险。
+- 清理 v0.4.1.1 更新日志中的合并冲突标记。
+- 项目版本统一升级为 `0.4.2.1`。
+
 # a2k_v0.4.2 更新日志
 
 ## v0.4.2 新增/调整
@@ -12,19 +23,12 @@
 
 ## v0.4.1.1 新增/调整
 
-<<<<<<< HEAD
 - 面向多数图像识别项目校准默认评分策略：CLIP embedding 作为主要分类信号，浅层 OpenCV 特征主要服务于解释、主动提问和用户反馈。
+- 基于 Kaggle fruits 70/30 评估校准默认配置：训练 251 张、测试 108 张，最终默认配置达到 107/108，准确率 99.07%。
 - 默认评分权重改为 CLIP embedding 强主导：`embedding: 5.00`，浅层可解释特征降低到 `0.02~0.03`。
 - `concepts.score_weight` 从 `0.25` 降到 `0.05`，概念层保留为辅助解释和弱校正。
 - `learning.max_weight` 从 `0.70` 提升到 `0.95`，避免归一化后过度压低 embedding 权重。
 - 默认主动提问阈值从 `ask_user_threshold: 0.12` 降到 `0.03`，适配 CLIP 相似度分数通常更密集的尺度，减少不必要打扰。
-=======
-- 基于 Kaggle fruits 70/30 评估校准默认配置：训练 251 张、测试 108 张，最终默认配置达到 107/108，准确率 99.07%。
-- 默认评分权重改为 CLIP embedding 强主导：`embedding: 5.00`，浅层 OpenCV 特征降低到 `0.02~0.03`。
-- `concepts.score_weight` 从 `0.25` 降到 `0.05`，概念层保留为辅助解释和弱校正。
-- `learning.max_weight` 从 `0.70` 提升到 `0.95`，避免归一化后过度压低 embedding 权重。
-- 默认主动提问阈值从 `ask_user_threshold: 0.12` 降到 `0.03`，适配 CLIP 分数尺度；在该评估上模拟询问 9/108，并捕获唯一错误样本。
->>>>>>> 22b91cdd204495d26cd3e019b80277f7c2f284a0
 - 项目版本统一升级为 `0.4.1.1`。
 
 # a2k_v0.4.1 更新日志

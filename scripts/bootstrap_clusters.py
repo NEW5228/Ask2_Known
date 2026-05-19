@@ -3,7 +3,6 @@ import json
 import sys
 from pathlib import Path
 
-import cv2
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -16,7 +15,7 @@ from ask2know.features.feature_config import resolve_deep_feature_config
 from ask2know.sample_pool.manager import SamplePoolManager, _safe_name
 from ask2know.utils.io_utils import load_yaml, save_json
 
-VERSION = '0.4.2'
+VERSION = '0.4.2.1'
 
 
 def _normalize_rows(arr):
@@ -106,11 +105,13 @@ def _extract_embeddings(samples, adapter):
     vectors = []
     kept_paths = []
     for path in paths:
-        img = cv2.imread(str(path))
-        if img is None:
+        feats = adapter.extract_path(path)
+        vec = feats.get(adapter.feature_name)
+        if vec is None and feats:
+            vec = next(iter(feats.values()))
+        if vec is None:
             print('Skip unreadable image:', path)
             continue
-        vec = adapter.extract_image_vector(img)
         arr = np.asarray(vec, dtype=np.float32).reshape(-1)
         if arr.size:
             vectors.append(arr)
@@ -161,7 +162,9 @@ def _save_objects(dataset_dir, labels):
                 'display_name': label,
                 'description': f'added by bootstrap_clusters v{VERSION}',
             }
-    save_json(Path(dataset_dir) / 'objects.json', {'objects': list(by_name.values())})
+    objects = list(by_name.values())
+    save_json(Path(dataset_dir) / 'objects.json', {'objects': objects})
+    return objects
 
 
 def _ask_mapping(summaries, names):
@@ -244,10 +247,9 @@ def main():
         return 0
 
     pool = SamplePoolManager(project_root=project_root, output_dir=output_dir, dataset_dir=dataset_dir, version=VERSION)
-    _save_objects(dataset_dir, assignments.values())
-    safe_labels = [_safe_name(label) for label in assignments.values()]
-    pool.ensure_for_classes(safe_labels)
-    pool.update_project_meta(classes=safe_labels)
+    objects = _save_objects(dataset_dir, assignments.values())
+    pool.ensure_for_classes(assignments.values())
+    pool.update_project_meta(classes=[item['name'] for item in objects if item.get('name')])
 
     copied = []
     for summary in summaries:

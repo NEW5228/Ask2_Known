@@ -18,9 +18,9 @@ def _l2_normalize(vec):
 
 
 class DeepFeatureAdapter:
-    """Required CLIP image embedding adapter for Ask2Know v0.4.2.
+    """Required CLIP image embedding adapter for Ask2Know v0.4.2.1.
 
-    v0.4.2 keeps OpenCLIP as the production embedding path. OpenCV embedding from
+    v0.4.2.1 keeps OpenCLIP as the production embedding path. OpenCV embedding from
     v0.4.0 is kept only as private legacy code and is not an accepted provider.
     """
 
@@ -47,6 +47,7 @@ class DeepFeatureAdapter:
             'enable': self.enabled,
             'provider': self.provider,
             'feature_name': self.feature_name,
+            'cache_fingerprint': self._cache_fingerprint(),
             'fallback_to_opencv': self.fallback_to_opencv,
             'include_augmented': self.include_augmented,
             'cache': self.cache_enabled and self.cache_dir is not None,
@@ -78,7 +79,7 @@ class DeepFeatureAdapter:
         if self.provider in ('clip', 'open_clip'):
             return self._try_external_provider(img, self._open_clip_embedding)
         raise ValueError(
-            f'Deep feature provider {self.provider!r} is not supported in Ask2Know v0.4.2. '
+            f'Deep feature provider {self.provider!r} is not supported in Ask2Know v0.4.2.1. '
             'Use provider: open_clip. OpenCV fallback is intentionally disabled.'
         )
 
@@ -191,6 +192,17 @@ class DeepFeatureAdapter:
         ]).astype(np.float32)
         return _l2_normalize(vec)
 
+    def _cache_fingerprint(self):
+        parts = {
+            'cache_schema': 'deep_features_v2',
+            'provider': self.provider,
+            'feature_name': self.feature_name,
+            'model_name': str(self.config.get('model_name', '')),
+            'pretrained': str(self.config.get('pretrained', '')),
+        }
+        raw = json.dumps(parts, ensure_ascii=False, sort_keys=True)
+        return hashlib.sha1(raw.encode('utf-8')).hexdigest()
+
     def _cache_key(self, path):
         if not path.exists():
             return None
@@ -199,8 +211,7 @@ class DeepFeatureAdapter:
             str(path.resolve()),
             str(int(stat.st_mtime_ns)),
             str(stat.st_size),
-            self.provider,
-            self.feature_name,
+            self._cache_fingerprint(),
         ])
         return hashlib.sha1(raw.encode('utf-8')).hexdigest()
 
@@ -221,6 +232,8 @@ class DeepFeatureAdapter:
                 data = json.load(f)
             if data.get('provider') != self.provider or data.get('feature_name') != self.feature_name:
                 return None
+            if data.get('cache_fingerprint') != self._cache_fingerprint():
+                return None
             return np.asarray(data.get('vector', []), dtype=np.float32)
         except Exception:
             return None
@@ -234,6 +247,7 @@ class DeepFeatureAdapter:
                 json.dump({
                     'provider': self.provider,
                     'feature_name': self.feature_name,
+                    'cache_fingerprint': self._cache_fingerprint(),
                     'vector': np.asarray(vec, dtype=np.float32).tolist(),
                 }, f)
         except Exception:

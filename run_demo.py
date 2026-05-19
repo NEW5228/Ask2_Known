@@ -12,7 +12,7 @@ from ask2know.questions.question_selector import QuestionSelector
 from ask2know.questions.question_generator import generate_natural_question, generate_question_context
 from ask2know.learning.weights import AdaptiveWeights
 from ask2know.learning.feedback_updater import apply_answer_to_weights, update_question_reward
-from ask2know.sample_pool.manager import SamplePoolManager
+from ask2know.sample_pool.manager import SamplePoolManager, _safe_name
 from ask2know.experience.pairwise import PairwiseExperienceManager
 from ask2know.concepts.basic_concepts import DISPLAY_NAMES, summarize_concepts
 from ask2know.features.feature_config import (
@@ -23,7 +23,7 @@ from ask2know.features.feature_config import (
     summarize_group_weights,
 )
 
-VERSION = '0.4.2'
+VERSION = '0.4.2.1'
 
 
 def open_image_file(image_path):
@@ -72,6 +72,10 @@ def print_header(title):
 
 def class_names(objects):
     return [o['name'] for o in objects]
+
+
+def canonical_class_name(label):
+    return _safe_name(label)
 
 
 def save_objects_file(dataset_dir, objects):
@@ -158,11 +162,12 @@ def confirm_prediction(pred_label, objects):
 
 
 def add_new_object_if_needed(objects, label):
-    if not label or label in class_names(objects):
+    storage_name = canonical_class_name(label)
+    if not label or storage_name in class_names(objects):
         return objects
     objects.append({
         'object_id': f'C{len(objects) + 1:03d}',
-        'name': label,
+        'name': storage_name,
         'display_name': label,
         'description': f'added during v{VERSION} interactive learning'
     })
@@ -171,7 +176,9 @@ def add_new_object_if_needed(objects, label):
 
 def handle_sample_decision(decision, label, sample_path, model, pool, objects, dataset_dir, pool_enabled=True, move_after_decision=True):
     if decision in ('confirmed', 'class', 'new') and label:
-        objects = add_new_object_if_needed(objects, label)
+        display_label = label
+        label = canonical_class_name(label)
+        objects = add_new_object_if_needed(objects, display_label)
         save_objects_file(dataset_dir, objects)
         pool.ensure_for_classes(class_names(objects))
         pool.update_project_meta(classes=class_names(objects))
@@ -186,6 +193,7 @@ def handle_sample_decision(decision, label, sample_path, model, pool, objects, d
         return {'decision': 'confirmed', 'label': label, 'saved_to': saved_path, 'persisted': True}
 
     if decision == 'candidate' and label:
+        label = canonical_class_name(label)
         if not pool_enabled or not move_after_decision:
             print('已记录为 candidate，但按配置不移动文件。')
             return {'decision': 'candidate', 'label': label, 'saved_to': None, 'persisted': False}
@@ -236,7 +244,7 @@ def _parse_multi_choice(text, valid_keys):
 def ask_correction_reason(predicted_label, true_label, pairwise_manager, adaptive_weights, feature_spec, sample_path=None):
     """Ask why a wrong prediction happened and store pairwise experience.
 
-    v0.4.2 supports multi-select answers because real differences often involve
+    v0.4.2.1 supports multi-select answers because real differences often involve
     color + shape + texture together.
     """
     if not predicted_label or not true_label or predicted_label == true_label:
@@ -539,7 +547,7 @@ def main():
     parser = argparse.ArgumentParser(description='Ask2Know low-sample active teaching demo')
     parser.add_argument('--config', default='configs/fruit_demo.yaml')
     parser.add_argument('--preview', action='store_true', help='手动开启图片预览。默认关闭，避免 Windows 图片查看器占用文件导致卡死')
-    parser.add_argument('--no-preview', action='store_true', help='兼容旧参数；v0.4.2 默认就是不预览')
+    parser.add_argument('--no-preview', action='store_true', help='兼容旧参数；v0.4.2.1 默认就是不预览')
     args = parser.parse_args()
 
     cfg = load_yaml(args.config)
@@ -701,9 +709,10 @@ def main():
                 decision, label = confirm_prediction(predicted_label, objects)
             pool_info = handle_sample_decision(decision, label, sample_path, model, pool, objects, dataset_dir, pool_enabled, move_after_decision)
             correction_info = None
-            if decision in ('class', 'new') and label and label != predicted_label:
+            corrected_label = pool_info.get('label') or label
+            if decision in ('class', 'new') and corrected_label and corrected_label != predicted_label:
                 correction_sample_path = pool_info.get('saved_to') or sample_path
-                correction_info = ask_correction_reason(predicted_label, label, pairwise, aw, feature_spec, sample_path=correction_sample_path)
+                correction_info = ask_correction_reason(predicted_label, corrected_label, pairwise, aw, feature_spec, sample_path=correction_sample_path)
             logs.append({
                 'sample': sample_path,
                 'before': results,
@@ -755,9 +764,10 @@ def main():
         decision, label = confirm_prediction(predicted_label, objects)
         pool_info = handle_sample_decision(decision, label, sample_path, model, pool, objects, dataset_dir, pool_enabled, move_after_decision)
         correction_info = None
-        if decision in ('class', 'new') and label and label != predicted_label:
+        corrected_label = pool_info.get('label') or label
+        if decision in ('class', 'new') and corrected_label and corrected_label != predicted_label:
             correction_sample_path = pool_info.get('saved_to') or sample_path
-            correction_info = ask_correction_reason(predicted_label, label, pairwise, aw, feature_spec, sample_path=correction_sample_path)
+            correction_info = ask_correction_reason(predicted_label, corrected_label, pairwise, aw, feature_spec, sample_path=correction_sample_path)
         helpful = False
         if pool_info.get('decision') == 'confirmed':
             old_gap = results[0]['score'] - results[1]['score']

@@ -17,7 +17,7 @@ from ask2know.inference.prototype_model import PrototypeModel
 from ask2know.learning.weights import AdaptiveWeights
 from ask2know.utils.io_utils import ensure_dir, load_yaml, save_json
 
-VERSION = '0.4.2'
+VERSION = '0.4.2.1'
 
 
 def class_names(objects):

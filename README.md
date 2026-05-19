@@ -2,7 +2,7 @@
 
 Ask2Know 是一个面向低样本图像识别任务的主动教学框架。
 
-当前版本：`0.4.2`
+当前版本：`0.4.2.1`
 
 核心流程：
 
@@ -86,9 +86,9 @@ D:\a2k_test\<task_name>\datasets\unknown
 
 图片文件名可以任意。运行时会根据配置自动规范化训练集和 unknown 图片文件名。
 
-## v0.4.2 数据目录和推荐流程
+## v0.4.2.1 数据目录和推荐流程
 
-v0.4.2 推荐的主流程是：先为每个类别准备少量已知样本，放入 `datasets/train/<class>`，让系统从一个可靠的小训练集开始。`datasets/unknown/` 的自动粗分功能保留为辅助整理工具，不建议直接把粗分结果当成最终训练集。
+v0.4.2.1 推荐的主流程是：先为每个类别准备少量已知样本，放入 `datasets/train/<class>`，让系统从一个可靠的小训练集开始。`datasets/unknown/` 的自动粗分功能保留为辅助整理工具，不建议直接把粗分结果当成最终训练集。
 
 ```text
 datasets/train/<class>/       已确认训练样本，推荐主入口
@@ -98,7 +98,7 @@ datasets/unlabeled/<class>/   带真实标签的验证集，用于计算准确�
 
 `run_demo.py` 会读取 `datasets/unknown/` 作为主动学习样本。`datasets/unlabeled/<class>/` 不进入主动学习，只用于评估。
 
-## v0.4.2 Bootstrap 粗分功能
+## v0.4.2.1 Bootstrap 粗分功能
 
 如果用户手里只有一堆混合图片，可以先放入 `datasets/unknown/`，再用 bootstrap 脚本粗分：
 
