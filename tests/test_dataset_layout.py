@@ -369,6 +369,47 @@ def test_pairwise_rerank_skips_large_score_margin():
     assert by_label['local_match']['pairwise_score_weight_used'] == 0.0
 
 
+def test_robust_prototype_downweights_embedding_outliers():
+    import numpy as np
+    from ask2know.inference.prototype_model import PrototypeModel
+
+    model = PrototypeModel(
+        ['image_embedding'],
+        concept_config={'enable': False},
+        similarity_config={
+            'knn': {'enable': False},
+            'sub_prototypes': {'enable': False},
+            'pairwise_rerank': {'enable': False},
+            'robust_prototype': {
+                'enable': True,
+                'min_samples': 4,
+                'trim_fraction': 0.25,
+            },
+        },
+        deep_feature_config={'enable': False},
+    )
+    vectors = {
+        'a': [1.0, 0.0],
+        'b': [0.99, 0.01],
+        'c': [0.98, 0.02],
+        'd': [-1.0, 0.0],
+    }
+    model._feature_list_for_sample = lambda path: [{'image_embedding': np.asarray(vectors[str(path)], dtype=np.float32)}]
+
+    model.fit([
+        {'label': 'class_a', 'path': 'a'},
+        {'label': 'class_a', 'path': 'b'},
+        {'label': 'class_a', 'path': 'c'},
+        {'label': 'class_a', 'path': 'd'},
+    ])
+
+    proto = model.prototypes['class_a']['image_embedding']
+
+    assert proto[0] > 0.9
+    assert model.prototype_stats['class_a']['image_embedding']['trimmed_count'] == 1
+    assert model.training_quality_report['class_a']['outliers'][0]['path'] == 'd'
+
+
 def test_prototype_concept_gate_ignores_weak_concept_gap():
     from ask2know.inference.prototype_model import PrototypeModel
 

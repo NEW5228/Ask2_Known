@@ -32,6 +32,31 @@ def _mean_vectors(vectors):
     return np.mean(np.stack(vectors), axis=0)
 
 
+def _robust_mean_vectors(vectors, trim_fraction=0.12, min_samples=12):
+    if not vectors:
+        return None, {'count': 0, 'used_count': 0, 'trimmed_count': 0}
+    rows = [np.asarray(vec, dtype=np.float32).reshape(-1) for vec in vectors]
+    if len(rows) < int(min_samples):
+        return np.mean(np.stack(rows), axis=0), {
+            'count': len(rows),
+            'used_count': len(rows),
+            'trimmed_count': 0,
+        }
+    matrix = np.stack(rows)
+    center = _l2_normalize(np.mean(matrix, axis=0))
+    sims = np.asarray([_cosine_similarity(row, center) for row in matrix], dtype=np.float32)
+    keep_count = int(round(len(rows) * (1.0 - float(trim_fraction))))
+    keep_count = min(len(rows), max(1, keep_count))
+    keep_indexes = np.argsort(sims)[-keep_count:]
+    return np.mean(matrix[keep_indexes], axis=0), {
+        'count': len(rows),
+        'used_count': int(keep_count),
+        'trimmed_count': int(len(rows) - keep_count),
+        'min_kept_similarity': float(np.min(sims[keep_indexes])) if len(keep_indexes) else None,
+        'min_similarity': float(np.min(sims)) if len(sims) else None,
+    }
+
+
 def _l2_normalize(vec):
     arr = np.asarray(vec, dtype=np.float32).reshape(-1)
     norm = float(np.linalg.norm(arr))
@@ -202,6 +227,13 @@ class PrototypeModel:
         self.pairwise_max_margin = max(0.0, float(self.pairwise_config.get('max_score_margin', 0.018)))
         self.pairwise_min_pair_similarity = max(0.0, min(1.0, float(self.pairwise_config.get('min_pair_similarity', 0.90))))
         self.pairwise_min_local_gap = max(0.0, float(self.pairwise_config.get('min_local_gap', 0.008)))
+        self.robust_config = dict(self.similarity_config.get('robust_prototype', {}))
+        self.robust_enabled = bool(self.robust_config.get('enable', True))
+        self.robust_deep_only = bool(self.robust_config.get('deep_only', True))
+        self.robust_min_samples = max(2, int(self.robust_config.get('min_samples', 24)))
+        self.robust_trim_fraction = max(0.0, min(0.4, float(self.robust_config.get('trim_fraction', 0.08))))
+        self.robust_report_margin = max(0.0, float(self.robust_config.get('report_margin', 0.015)))
+        self.robust_top_outliers = max(1, int(self.robust_config.get('top_outliers_per_class', 5)))
         self.deep_adapter = DeepFeatureAdapter(deep_feature_config, cache_dir=deep_cache_dir)
         self.deep_feature_name = self.deep_adapter.feature_name or DEFAULT_DEEP_FEATURE_NAME
         self.prototypes = {}
@@ -213,6 +245,8 @@ class PrototypeModel:
         self.sample_features = {}
         self.feature_counts = {}
         self.concept_counts = {}
+        self.prototype_stats = {}
+        self.training_quality_report = {}
 
     def _allowed_concepts(self):
         if not self.feature_groups:
@@ -263,6 +297,8 @@ class PrototypeModel:
         self.sample_features = {}
         self.feature_counts = {}
         self.concept_counts = {}
+        self.prototype_stats = {}
+        self.training_quality_report = {}
         for sample in samples:
             label = sample['label']
             feats_list = self._feature_list_for_sample(sample['path'])
@@ -293,7 +329,20 @@ class PrototypeModel:
             self.feature_counts[label] = {}
             for name in list(self.feature_names) + list(self.system_feature_names):
                 if name in fdict:
-                    self.prototypes[label][name] = _mean_vectors(fdict[name])
+                    use_robust = (
+                        self.robust_enabled
+                        and (not self.robust_deep_only or name in {self.deep_feature_name, DEFAULT_DEEP_FEATURE_NAME})
+                    )
+                    if use_robust:
+                        mean, stats = _robust_mean_vectors(
+                            fdict[name],
+                            trim_fraction=self.robust_trim_fraction,
+                            min_samples=self.robust_min_samples,
+                        )
+                        self.prototype_stats.setdefault(label, {})[name] = stats
+                        self.prototypes[label][name] = mean
+                    else:
+                        self.prototypes[label][name] = _mean_vectors(fdict[name])
                     self.feature_counts[label][name] = len(fdict[name])
         for label, cdict in concept_grouped.items():
             self.concept_prototypes[label] = {}
@@ -304,6 +353,7 @@ class PrototypeModel:
         self._build_sub_prototypes(self.prototypes.keys())
         self._build_text_prototypes(self.prototypes.keys())
         self._build_pairwise_similarities()
+        self._build_training_quality_report()
         return self
 
     def add_confirmed_sample(self, label, image_path):
@@ -358,7 +408,9 @@ class PrototypeModel:
                 self.concept_counts[label][name] = total
         self._build_sub_prototypes([label])
         self._build_text_prototypes([label])
+        self._refresh_label_robust_deep_prototype(label)
         self._build_pairwise_similarities()
+        self._build_training_quality_report()
 
     def _feature_similarity(self, name, a, b):
         if name == 'color':
@@ -452,6 +504,84 @@ class PrototypeModel:
                 if right_vec is None:
                     continue
                 self.pairwise_similarities[self._pair_key(left, right)] = _cosine_similarity(left_vec, right_vec)
+
+    def _refresh_label_robust_deep_prototype(self, label):
+        if not self.robust_enabled:
+            return
+        vectors = []
+        for item in self.sample_features.get(label, []):
+            feats = item.get('features') or {}
+            vec = feats.get(self.deep_feature_name)
+            if vec is None:
+                vec = feats.get(DEFAULT_DEEP_FEATURE_NAME)
+            if vec is not None:
+                vectors.append(vec)
+        if not vectors:
+            return
+        mean, stats = _robust_mean_vectors(
+            vectors,
+            trim_fraction=self.robust_trim_fraction,
+            min_samples=self.robust_min_samples,
+        )
+        self.prototypes.setdefault(label, {})[self.deep_feature_name] = mean
+        self.prototype_stats.setdefault(label, {})[self.deep_feature_name] = stats
+
+    def _build_training_quality_report(self):
+        self.training_quality_report = {}
+        labels = sorted(self.prototypes.keys())
+        for label in labels:
+            rows = []
+            own_proto = self.prototypes.get(label, {})
+            own_vec = own_proto.get(self.deep_feature_name)
+            if own_vec is None:
+                own_vec = own_proto.get(DEFAULT_DEEP_FEATURE_NAME)
+            if own_vec is None:
+                continue
+            for item in self.sample_features.get(label, []):
+                feats = item.get('features') or {}
+                vec = feats.get(self.deep_feature_name)
+                if vec is None:
+                    vec = feats.get(DEFAULT_DEEP_FEATURE_NAME)
+                if vec is None:
+                    continue
+                own_score = _cosine_similarity(vec, own_vec)
+                competitor_label = None
+                competitor_score = None
+                for other in labels:
+                    if other == label:
+                        continue
+                    other_proto = self.prototypes.get(other, {})
+                    other_vec = other_proto.get(self.deep_feature_name)
+                    if other_vec is None:
+                        other_vec = other_proto.get(DEFAULT_DEEP_FEATURE_NAME)
+                    if other_vec is None:
+                        continue
+                    score = _cosine_similarity(vec, other_vec)
+                    if competitor_score is None or score > competitor_score:
+                        competitor_label = other
+                        competitor_score = score
+                margin = None if competitor_score is None else own_score - competitor_score
+                rows.append({
+                    'path': str(item.get('path')),
+                    'own_score': float(own_score),
+                    'nearest_competitor': competitor_label,
+                    'nearest_competitor_score': None if competitor_score is None else float(competitor_score),
+                    'margin': margin,
+                })
+            rows.sort(key=lambda row: row['own_score'])
+            risk_rows = [
+                row for row in rows
+                if row['margin'] is not None and row['margin'] < self.robust_report_margin
+            ]
+            self.training_quality_report[label] = {
+                'sample_count': len(rows),
+                'prototype_stats': self.prototype_stats.get(label, {}).get(self.deep_feature_name, {}),
+                'outliers': rows[:self.robust_top_outliers],
+                'confusion_risk_samples': sorted(
+                    risk_rows,
+                    key=lambda row: row['margin'] if row['margin'] is not None else 0.0,
+                )[:self.robust_top_outliers],
+            }
 
     def _pairwise_local_score(self, label, feats, weights):
         neighbors = []
@@ -754,6 +884,14 @@ class PrototypeModel:
                     'min_pair_similarity': self.pairwise_min_pair_similarity,
                     'min_local_gap': self.pairwise_min_local_gap,
                 },
+                'robust_prototype': {
+                    'enable': self.robust_enabled,
+                    'deep_only': self.robust_deep_only,
+                    'min_samples': self.robust_min_samples,
+                    'trim_fraction': self.robust_trim_fraction,
+                    'report_margin': self.robust_report_margin,
+                    'top_outliers_per_class': self.robust_top_outliers,
+                },
                 'concept_gate': {
                     'enable': self.concept_gate_enabled,
                     'min_top_gap': self.concept_gate_min_gap,
@@ -763,6 +901,8 @@ class PrototypeModel:
             'deep_features': self.deep_adapter.metadata(),
             'feature_groups': self.feature_groups,
             'system_features': self.system_feature_names,
+            'prototype_stats': self.prototype_stats,
+            'training_quality_report': self.training_quality_report,
             'sample_index': {
                 label: [str(path) for path in paths]
                 for label, paths in self.samples.items()

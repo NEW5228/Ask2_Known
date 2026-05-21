@@ -2,7 +2,7 @@
 
 Ask2Know 是一个面向低样本图像识别任务的主动教学框架。
 
-当前版本：`0.4.4.2`
+当前版本：`0.4.5`
 
 核心流程：
 
@@ -196,6 +196,13 @@ similarity:
     max_score_margin: 0.018
     min_pair_similarity: 0.90
     min_local_gap: 0.008
+  robust_prototype:
+    enable: true
+    deep_only: true
+    min_samples: 24
+    trim_fraction: 0.08
+    report_margin: 0.015
+    top_outliers_per_class: 5
   concept_gate:
     enable: true
     min_top_gap: 0.035

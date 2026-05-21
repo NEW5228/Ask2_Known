@@ -120,10 +120,10 @@ def resolve_deep_feature_config(cfg):
     if isinstance(raw, dict):
         merged.update(raw)
     if not bool(merged.get('enable', True)):
-        raise ValueError('Ask2Know v0.4.4.2 requires deep_features.enable: true with provider: open_clip.')
+        raise ValueError('Ask2Know v0.4.5 requires deep_features.enable: true with provider: open_clip.')
     provider = str(merged.get('provider', 'open_clip')).strip().lower()
     if provider not in ('clip', 'open_clip'):
-        raise ValueError('Ask2Know v0.4.4.2 requires deep_features.provider: open_clip.')
+        raise ValueError('Ask2Know v0.4.5 requires deep_features.provider: open_clip.')
     merged['provider'] = provider
     merged['fallback_to_opencv'] = False
     return merged

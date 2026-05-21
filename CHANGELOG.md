@@ -1,3 +1,11 @@
+# a2k_v0.4.5 更新日志
+
+## v0.4.5 调整
+
+- 新增 similarity.robust_prototype：默认只对 CLIP embedding prototype 使用保守 trimmed mean；少于 24 个样本时只生成质量报告，避免低样本下误删有效类内变化。
+- 评估报告新增 training_quality_report，输出每类低相似训练样本和更接近混淆类的风险样本，帮助定位为什么更多训练图不一定更好。
+- 项目版本升级为 0.4.5。
+
 # a2k_v0.4.4.2 更新日志
 
 ## v0.4.4.2 调整
