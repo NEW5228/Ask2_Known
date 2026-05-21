@@ -40,6 +40,47 @@ def _l2_normalize(vec):
     return arr / norm
 
 
+def _normalized_matrix(vectors):
+    rows = []
+    for vec in vectors or []:
+        arr = _l2_normalize(vec)
+        if arr.size:
+            rows.append(arr)
+    if not rows:
+        return np.zeros((0, 0), dtype=np.float32)
+    return np.stack(rows).astype(np.float32)
+
+
+def _subprototype_centers(vectors, max_centers=3, min_samples_per_center=8, max_iter=30):
+    x = _normalized_matrix(vectors)
+    n = len(x)
+    if n <= 0:
+        return []
+    k = min(int(max_centers), max(1, n // max(1, int(min_samples_per_center))))
+    if k <= 1:
+        return []
+    centers = [x[0]]
+    min_dist = np.sum((x - centers[0]) ** 2, axis=1)
+    for _ in range(1, k):
+        idx = int(np.argmax(min_dist))
+        centers.append(x[idx])
+        dist = np.sum((x - x[idx]) ** 2, axis=1)
+        min_dist = np.minimum(min_dist, dist)
+    centers = np.stack(centers).astype(np.float32)
+    labels = np.zeros(n, dtype=np.int32)
+    for _ in range(max_iter):
+        sims = x @ centers.T
+        new_labels = np.argmax(sims, axis=1).astype(np.int32)
+        if np.array_equal(new_labels, labels):
+            break
+        labels = new_labels
+        for cluster_id in range(k):
+            members = x[labels == cluster_id]
+            if len(members):
+                centers[cluster_id] = _l2_normalize(np.mean(members, axis=0))
+    return [centers[i].copy() for i in range(k)]
+
+
 def _hist_similarity(a, b):
     a = np.asarray(a, dtype=np.float32)
     b = np.asarray(b, dtype=np.float32)
@@ -129,6 +170,11 @@ class PrototypeModel:
         self.knn_enabled = bool(self.knn_config.get('enable', False))
         self.knn_k = max(1, int(self.knn_config.get('k', 3)))
         self.knn_score_weight = max(0.0, min(0.8, float(self.knn_config.get('score_weight', 0.20))))
+        self.subprototype_config = dict(self.similarity_config.get('sub_prototypes', {}))
+        self.subprototype_enabled = bool(self.subprototype_config.get('enable', True))
+        self.subprototype_max_centers = max(1, int(self.subprototype_config.get('max_centers', 3)))
+        self.subprototype_min_samples = max(1, int(self.subprototype_config.get('min_samples_per_center', 8)))
+        self.subprototype_score_weight = max(0.0, min(0.5, float(self.subprototype_config.get('score_weight', 0.12))))
         self.text_config = dict(self.similarity_config.get('text_semantic', {}))
         self.text_enabled = bool(self.text_config.get('enable', False))
         self.text_score_weight = max(0.0, min(0.5, float(self.text_config.get('score_weight', 0.08))))
@@ -146,6 +192,7 @@ class PrototypeModel:
         self.deep_adapter = DeepFeatureAdapter(deep_feature_config, cache_dir=deep_cache_dir)
         self.deep_feature_name = self.deep_adapter.feature_name or DEFAULT_DEEP_FEATURE_NAME
         self.prototypes = {}
+        self.sub_prototypes = {}
         self.text_prototypes = {}
         self.concept_prototypes = {}
         self.samples = {}
@@ -223,6 +270,7 @@ class PrototypeModel:
                     for cname, value in self._concepts_from_features(feats).items():
                         concept_grouped[label].setdefault(cname, []).append(float(value))
         self.prototypes = {}
+        self.sub_prototypes = {}
         self.text_prototypes = {}
         self.concept_prototypes = {}
         for label, fdict in grouped.items():
@@ -238,6 +286,7 @@ class PrototypeModel:
             for name, values in cdict.items():
                 self.concept_prototypes[label][name] = float(np.mean(values))
                 self.concept_counts[label][name] = len(values)
+        self._build_sub_prototypes(self.prototypes.keys())
         self._build_text_prototypes(self.prototypes.keys())
         return self
 
@@ -291,6 +340,7 @@ class PrototypeModel:
                 total = old_count + new_count
                 self.concept_prototypes[label][name] = (float(old) * old_count + new_mean * new_count) / total
                 self.concept_counts[label][name] = total
+        self._build_sub_prototypes([label])
         self._build_text_prototypes([label])
 
     def _feature_similarity(self, name, a, b):
@@ -365,6 +415,39 @@ class PrototypeModel:
     def _label_prompt_text(self, label):
         return str(label).replace('_', ' ').replace('-', ' ').strip()
 
+    def _build_sub_prototypes(self, labels):
+        if not self.subprototype_enabled:
+            return
+        for label in labels:
+            vectors = []
+            for item in self.sample_features.get(label, []):
+                feats = item.get('features') or {}
+                vec = feats.get(self.deep_feature_name)
+                if vec is None:
+                    vec = feats.get(DEFAULT_DEEP_FEATURE_NAME)
+                if vec is not None:
+                    vectors.append(vec)
+            centers = _subprototype_centers(
+                vectors,
+                max_centers=self.subprototype_max_centers,
+                min_samples_per_center=self.subprototype_min_samples,
+            )
+            if centers:
+                self.sub_prototypes[label] = centers
+            else:
+                self.sub_prototypes.pop(label, None)
+
+    def _subprototype_score(self, label, feats):
+        if not self.subprototype_enabled:
+            return None
+        centers = self.sub_prototypes.get(label) or []
+        image_vec = feats.get(self.deep_feature_name)
+        if image_vec is None:
+            image_vec = feats.get(DEFAULT_DEEP_FEATURE_NAME)
+        if image_vec is None or not centers:
+            return None
+        return max(_cosine_similarity(image_vec, center) for center in centers)
+
     def _build_text_prototypes(self, labels):
         if not self.text_enabled or not self.deep_adapter.is_enabled():
             return
@@ -426,6 +509,11 @@ class PrototypeModel:
                 kw = self.knn_score_weight
                 feature_score = (1.0 - kw) * prototype_score + kw * knn_score
             final = feature_score
+            subprototype_score = self._subprototype_score(label, feats)
+            if subprototype_score is not None:
+                detail['subprototype'] = subprototype_score
+                sw = self.subprototype_score_weight
+                final = (1.0 - sw) * final + sw * subprototype_score
             text_score = self._text_semantic_score(label, feats)
             if text_score is not None:
                 detail['text_semantic'] = text_score
@@ -441,6 +529,7 @@ class PrototypeModel:
                 'score': final,
                 'feature_score': feature_score,
                 'prototype_score': prototype_score,
+                'subprototype_score': subprototype_score,
                 'knn_score': knn_score,
                 'text_semantic_score': text_score,
                 'concept_score': concept_score,
@@ -470,6 +559,10 @@ class PrototypeModel:
                 label: {k: v.tolist() for k, v in feats.items()}
                 for label, feats in self.prototypes.items()
             },
+            'sub_prototypes': {
+                label: [vec.tolist() for vec in vectors]
+                for label, vectors in self.sub_prototypes.items()
+            },
             'text_prototypes': {
                 label: vec.tolist()
                 for label, vec in self.text_prototypes.items()
@@ -484,6 +577,12 @@ class PrototypeModel:
                     'enable': self.knn_enabled,
                     'k': self.knn_k,
                     'score_weight': self.knn_score_weight,
+                },
+                'sub_prototypes': {
+                    'enable': self.subprototype_enabled,
+                    'max_centers': self.subprototype_max_centers,
+                    'min_samples_per_center': self.subprototype_min_samples,
+                    'score_weight': self.subprototype_score_weight,
                 },
                 'text_semantic': {
                     'enable': self.text_enabled,

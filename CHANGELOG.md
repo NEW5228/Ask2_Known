@@ -1,3 +1,12 @@
+# a2k_v0.4.4 更新日志
+
+## v0.4.4 新增/调整
+
+- 新增 sub-prototypes 多原型评分：每类样本足够多时，会基于 CLIP embedding 生成多个类别子中心。
+- similarity.sub_prototypes 支持 enable、max_centers、min_samples_per_center 和 score_weight 配置。
+- 预测结果和评估报告新增 subprototype_score，用于观察局部类别中心是否修正单一 prototype 的平均化问题。
+- 项目版本升级为 0.4.4。
+
 # a2k_v0.4.3.1 更新日志
 
 ## v0.4.3.1 新增/调整

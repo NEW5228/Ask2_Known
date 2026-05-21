@@ -47,6 +47,11 @@ similarity:
     enable: true
     k: 3
     score_weight: 0.20
+  sub_prototypes:
+    enable: true
+    max_centers: 3
+    min_samples_per_center: 8
+    score_weight: 0.12
   text_semantic:
     enable: true
     score_weight: 0.08

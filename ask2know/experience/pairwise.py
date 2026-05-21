@@ -113,7 +113,7 @@ def pair_key(a, b):
 
 
 class PairwiseExperienceManager:
-    def __init__(self, metadata_dir=None, path=None, version='0.4.3.1'):
+    def __init__(self, metadata_dir=None, path=None, version='0.4.4'):
         self.version = version
         if path is not None:
             self.path = Path(path)

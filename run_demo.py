@@ -23,7 +23,7 @@ from ask2know.features.feature_config import (
     summarize_group_weights,
 )
 
-VERSION = '0.4.3.1'
+VERSION = '0.4.4'
 
 
 def open_image_file(image_path):
@@ -48,6 +48,8 @@ def display_results(results, max_items=5):
         sources = []
         if r.get('prototype_score') is not None:
             sources.append(f'proto:{r["prototype_score"]:.3f}')
+        if r.get('subprototype_score') is not None:
+            sources.append(f'subproto:{r["subprototype_score"]:.3f}')
         if r.get('knn_score') is not None:
             sources.append(f'knn:{r["knn_score"]:.3f}')
         if r.get('text_semantic_score') is not None:
@@ -246,7 +248,7 @@ def _parse_multi_choice(text, valid_keys):
 def ask_correction_reason(predicted_label, true_label, pairwise_manager, adaptive_weights, feature_spec, sample_path=None):
     """Ask why a wrong prediction happened and store pairwise experience.
 
-    v0.4.3.1 supports multi-select answers because real differences often involve
+    v0.4.4 supports multi-select answers because real differences often involve
     color + shape + texture together.
     """
     if not predicted_label or not true_label or predicted_label == true_label:
@@ -549,7 +551,7 @@ def main():
     parser = argparse.ArgumentParser(description='Ask2Know low-sample active teaching demo')
     parser.add_argument('--config', default='configs/fruit_demo.yaml')
     parser.add_argument('--preview', action='store_true', help='手动开启图片预览。默认关闭，避免 Windows 图片查看器占用文件导致卡死')
-    parser.add_argument('--no-preview', action='store_true', help='兼容旧参数；v0.4.3.1 默认就是不预览')
+    parser.add_argument('--no-preview', action='store_true', help='兼容旧参数；v0.4.4 默认就是不预览')
     args = parser.parse_args()
 
     cfg = load_yaml(args.config)

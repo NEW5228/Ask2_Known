@@ -18,9 +18,9 @@ def _l2_normalize(vec):
 
 
 class DeepFeatureAdapter:
-    """Required CLIP image embedding adapter for Ask2Know v0.4.3.1.
+    """Required CLIP image embedding adapter for Ask2Know v0.4.4.
 
-    v0.4.3.1 keeps OpenCLIP as the production embedding path. OpenCV embedding from
+    v0.4.4 keeps OpenCLIP as the production embedding path. OpenCV embedding from
     v0.4.0 is kept only as private legacy code and is not an accepted provider.
     """
 
@@ -79,7 +79,7 @@ class DeepFeatureAdapter:
         if self.provider in ('clip', 'open_clip'):
             return self._try_external_provider(img, self._open_clip_embedding)
         raise ValueError(
-            f'Deep feature provider {self.provider!r} is not supported in Ask2Know v0.4.3.1. '
+            f'Deep feature provider {self.provider!r} is not supported in Ask2Know v0.4.4. '
             'Use provider: open_clip. OpenCV fallback is intentionally disabled.'
         )
 
@@ -97,7 +97,7 @@ class DeepFeatureAdapter:
                     'model weights are cached or downloadable.'
                 ) from exc
         raise ValueError(
-            f'Deep feature provider {self.provider!r} is not supported in Ask2Know v0.4.3.1. '
+            f'Deep feature provider {self.provider!r} is not supported in Ask2Know v0.4.4. '
             'Use provider: open_clip.'
         )
 

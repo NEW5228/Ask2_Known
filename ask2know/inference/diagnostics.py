@@ -1,5 +1,6 @@
 SCORE_KEYS = (
     'prototype_score',
+    'subprototype_score',
     'knn_score',
     'text_semantic_score',
     'concept_score',
@@ -58,6 +59,7 @@ def diagnose_prediction(results, true_label=None, low_margin_threshold=0.015, we
     if second is not None:
         for key, reason in (
             ('prototype_score', 'prototype_led'),
+            ('subprototype_score', 'subprototype_led'),
             ('knn_score', 'knn_led'),
             ('text_semantic_score', 'text_semantic_led'),
             ('concept_score', 'concept_led'),
@@ -67,6 +69,7 @@ def diagnose_prediction(results, true_label=None, low_margin_threshold=0.015, we
                 reason_codes.append(reason)
         for key, reason in (
             ('prototype_score', 'prototype_weak_or_against_top'),
+            ('subprototype_score', 'subprototype_conflicts_with_top'),
             ('knn_score', 'knn_conflicts_with_top'),
             ('text_semantic_score', 'text_semantic_conflicts_with_top'),
             ('concept_score', 'concept_conflicts_with_top'),

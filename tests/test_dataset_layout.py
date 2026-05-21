@@ -188,6 +188,33 @@ def test_prototype_text_semantic_score_can_break_ties():
     assert results[0]['text_semantic_score'] > results[1]['text_semantic_score']
 
 
+def test_prototype_subprototype_score_can_break_mean_ties():
+    import numpy as np
+    from ask2know.inference.prototype_model import PrototypeModel
+
+    model = PrototypeModel(
+        ['image_embedding'],
+        concept_config={'enable': False},
+        similarity_config={'sub_prototypes': {'enable': True, 'score_weight': 0.30}},
+        deep_feature_config={'enable': False},
+    )
+    same_proto = np.asarray([0.7, 0.7], dtype=np.float32)
+    model.prototypes = {
+        'striped': {'image_embedding': same_proto},
+        'plain': {'image_embedding': same_proto},
+    }
+    model.sub_prototypes = {
+        'striped': [np.asarray([1.0, 0.0], dtype=np.float32)],
+        'plain': [np.asarray([0.0, 1.0], dtype=np.float32)],
+    }
+    model._extract_primary_features = lambda path: {'image_embedding': np.asarray([1.0, 0.0], dtype=np.float32)}
+
+    results = model.predict('sample.jpg', {'image_embedding': 1.0})
+
+    assert results[0]['label'] == 'striped'
+    assert results[0]['subprototype_score'] > results[1]['subprototype_score']
+
+
 def test_prototype_concept_gate_ignores_weak_concept_gap():
     from ask2know.inference.prototype_model import PrototypeModel
 
