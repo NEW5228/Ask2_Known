@@ -2,7 +2,7 @@
 
 Ask2Know 是一个面向低样本图像识别任务的主动教学框架。
 
-当前版本：`0.4.2.1`
+当前版本：`0.4.2.1n`
 
 核心流程：
 
@@ -86,9 +86,9 @@ D:\a2k_test\<task_name>\datasets\unknown
 
 图片文件名可以任意。运行时会根据配置自动规范化训练集和 unknown 图片文件名。
 
-## v0.4.2.1 数据目录和推荐流程
+## v0.4.2.1n 数据目录和推荐流程
 
-v0.4.2.1 推荐的主流程是：先为每个类别准备少量已知样本，放入 `datasets/train/<class>`，让系统从一个可靠的小训练集开始。`datasets/unknown/` 的自动粗分功能保留为辅助整理工具，不建议直接把粗分结果当成最终训练集。
+v0.4.2.1n 推荐的主流程是：先为每个类别准备少量已知样本，放入 `datasets/train/<class>`，让系统从一个可靠的小训练集开始。`datasets/unknown/` 的自动粗分功能保留为辅助整理工具，不建议直接把粗分结果当成最终训练集。
 
 ```text
 datasets/train/<class>/       已确认训练样本，推荐主入口
@@ -98,7 +98,7 @@ datasets/unlabeled/<class>/   带真实标签的验证集，用于计算准确�
 
 `run_demo.py` 会读取 `datasets/unknown/` 作为主动学习样本。`datasets/unlabeled/<class>/` 不进入主动学习，只用于评估。
 
-## v0.4.2.1 Bootstrap 粗分功能
+## v0.4.2.1n Bootstrap 粗分功能
 
 如果用户手里只有一堆混合图片，可以先放入 `datasets/unknown/`，再用 bootstrap 脚本粗分：
 
@@ -112,7 +112,13 @@ python scripts\bootstrap_clusters.py --config D:\a2k_test\<task_name>\configs\ta
 python scripts\bootstrap_clusters.py --config D:\a2k_test\<task_name>\configs\task_config.yaml --names 张三 李四 王五 赵六
 ```
 
-脚本会读取 `datasets/unknown/`，用 CLIP embedding 聚类，展示每组代表图片，让用户确认每组叫什么，然后将确认后的图片复制到 `datasets/train/<class>/`。原始 `unknown/` 图片会保留。
+脚本会读取 `datasets/unknown/`，用 CLIP embedding 聚类，展示每组代表图片和低相似度离群候选，让用户确认每组叫什么。复制前会生成 review 清单，并允许按单张图片跳过；只有 review 计划中保留的图片才会复制到 `datasets/train/<class>/`。原始 `unknown/` 图片会保留。
+
+只想检查聚类和复制计划，不写入训练集时使用：
+
+```bat
+python scripts\bootstrap_clusters.py --config D:\a2k_test\<task_name>\configs\task_config.yaml --report-only
+```
 
 注意：bootstrap 是粗分辅助工具，不保证每个 cluster 都纯净。正式任务仍建议从人工整理的少量 `train/<class>` 样本开始；bootstrap 结果应由用户复核后再进入训练库。
 

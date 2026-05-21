@@ -1,3 +1,12 @@
+# a2k_v0.4.2.1n 更新日志
+
+## v0.4.2.1n 修复
+
+- 优化 `bootstrap_clusters.py` 的训练集写入流程：复制前生成 review 清单，标出每组低相似度离群候选，并支持按单张图片跳过。
+- 新增 `--report-only` / `--dry-run`，只输出聚类与复制计划报告，不写入 `datasets/train/<class>/`。
+- `--no-copy` 保留为兼容参数，行为等同于 report-only。
+- 运行时版本升级为 `0.4.2.1n`；Python package 元数据使用 PEP 440 合法版本 `0.4.2.1.post1`。
+
 # a2k_v0.4.2.1 更新日志
 
 ## v0.4.2.1 修复

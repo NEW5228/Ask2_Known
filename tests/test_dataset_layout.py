@@ -1,7 +1,7 @@
 from ask2know.data.dataset_loader import DatasetLoader
 from ask2know.features.deep_adapter import DeepFeatureAdapter
 from ask2know.sample_pool.manager import SamplePoolManager
-from scripts.bootstrap_clusters import _extract_embeddings
+from scripts.bootstrap_clusters import _build_review_rows, _extract_embeddings, _parse_skip_answer
 
 
 def _touch(path):
@@ -125,3 +125,37 @@ def test_sample_pool_index_keeps_storage_and_display_names(tmp_path):
     assert index['classes']['red_apple']['storage_name'] == 'red_apple'
     assert index['classes']['red_apple']['label'] == 'red apple'
     assert index['classes']['red_apple']['display_name'] == 'red apple'
+
+
+def test_bootstrap_skip_answer_accepts_indexes_and_ranges():
+    shown = [
+        {'path': 'a.jpg'},
+        {'path': 'b.jpg'},
+        {'path': 'c.jpg'},
+        {'path': 'd.jpg'},
+    ]
+
+    skipped, skip_all = _parse_skip_answer('1, 3-4', shown)
+
+    assert skipped == {'a.jpg', 'c.jpg', 'd.jpg'}
+    assert skip_all is False
+
+
+def test_bootstrap_review_rows_skip_single_image(tmp_path):
+    keep = tmp_path / 'unknown' / 'keep.jpg'
+    skip = tmp_path / 'unknown' / 'skip.jpg'
+    summaries = [{
+        'cluster_id': 0,
+        'mean_similarity': 0.8,
+        'similarity_std': 0.1,
+        'items': [
+            {'path': str(keep), 'similarity': 0.92, 'review_candidate': False},
+            {'path': str(skip), 'similarity': 0.61, 'review_candidate': True},
+        ],
+    }]
+
+    rows = _build_review_rows(summaries, {0: 'red apple'}, skipped_paths={skip})
+
+    assert [row['action'] for row in rows] == ['copy', 'skip']
+    assert rows[0]['label'] == 'red_apple'
+    assert rows[1]['review_candidate'] is True
