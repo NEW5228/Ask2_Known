@@ -18,7 +18,7 @@ from ask2know.inference.prototype_model import PrototypeModel
 from ask2know.learning.weights import AdaptiveWeights
 from ask2know.utils.io_utils import ensure_dir, load_yaml, save_json
 
-VERSION = '0.4.4.2'
+VERSION = '0.4.5'
 
 
 def class_names(objects):
@@ -152,6 +152,7 @@ def main():
             'needs_review_count': review_count,
             'reason_counts': dict(sorted(reason_counts.items())),
         },
+        'training_quality_report': model.training_quality_report,
         'per_class': {
             label: {
                 'total': item['total'],
