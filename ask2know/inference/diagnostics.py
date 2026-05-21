@@ -3,6 +3,7 @@ SCORE_KEYS = (
     'subprototype_score',
     'knn_score',
     'text_semantic_score',
+    'pairwise_score',
     'concept_score',
 )
 
@@ -62,6 +63,7 @@ def diagnose_prediction(results, true_label=None, low_margin_threshold=0.015, we
             ('subprototype_score', 'subprototype_led'),
             ('knn_score', 'knn_led'),
             ('text_semantic_score', 'text_semantic_led'),
+            ('pairwise_score', 'pairwise_led'),
             ('concept_score', 'concept_led'),
         ):
             delta = margins.get(key)
@@ -72,6 +74,7 @@ def diagnose_prediction(results, true_label=None, low_margin_threshold=0.015, we
             ('subprototype_score', 'subprototype_conflicts_with_top'),
             ('knn_score', 'knn_conflicts_with_top'),
             ('text_semantic_score', 'text_semantic_conflicts_with_top'),
+            ('pairwise_score', 'pairwise_conflicts_with_top'),
             ('concept_score', 'concept_conflicts_with_top'),
         ):
             delta = margins.get(key)

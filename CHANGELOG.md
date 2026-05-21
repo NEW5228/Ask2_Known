@@ -1,3 +1,11 @@
+# a2k_v0.4.4.2 更新日志
+
+## v0.4.4.2 调整
+
+- 新增 similarity.pairwise_rerank：当 top1/top2 属于高相似类别且最终分差很小时，使用这两个类别的局部近邻证据重新加权，降低相似品种互相混淆的风险。
+- 评估报告新增 pairwise_score、pairwise_score_weight_used、pairwise_gate_reason、pairwise_pair_similarity 和 pairwise_local_gap，便于复盘 pairwise rerank 是否参与预测。
+- 项目版本升级为 0.4.4.2。
+
 # a2k_v0.4.4.1 更新日志
 
 ## v0.4.4.1 调整

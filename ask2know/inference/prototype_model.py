@@ -195,11 +195,19 @@ class PrototypeModel:
             self.concept_score_weight,
             float(self.concept_gate_config.get('weak_score_weight', 0.0)),
         ))
+        self.pairwise_config = dict(self.similarity_config.get('pairwise_rerank', {}))
+        self.pairwise_enabled = bool(self.pairwise_config.get('enable', True))
+        self.pairwise_local_k = max(1, int(self.pairwise_config.get('local_k', 5)))
+        self.pairwise_score_weight = max(0.0, min(0.5, float(self.pairwise_config.get('score_weight', 0.25))))
+        self.pairwise_max_margin = max(0.0, float(self.pairwise_config.get('max_score_margin', 0.018)))
+        self.pairwise_min_pair_similarity = max(0.0, min(1.0, float(self.pairwise_config.get('min_pair_similarity', 0.90))))
+        self.pairwise_min_local_gap = max(0.0, float(self.pairwise_config.get('min_local_gap', 0.008)))
         self.deep_adapter = DeepFeatureAdapter(deep_feature_config, cache_dir=deep_cache_dir)
         self.deep_feature_name = self.deep_adapter.feature_name or DEFAULT_DEEP_FEATURE_NAME
         self.prototypes = {}
         self.sub_prototypes = {}
         self.text_prototypes = {}
+        self.pairwise_similarities = {}
         self.concept_prototypes = {}
         self.samples = {}
         self.sample_features = {}
@@ -278,6 +286,7 @@ class PrototypeModel:
         self.prototypes = {}
         self.sub_prototypes = {}
         self.text_prototypes = {}
+        self.pairwise_similarities = {}
         self.concept_prototypes = {}
         for label, fdict in grouped.items():
             self.prototypes[label] = {}
@@ -294,6 +303,7 @@ class PrototypeModel:
                 self.concept_counts[label][name] = len(values)
         self._build_sub_prototypes(self.prototypes.keys())
         self._build_text_prototypes(self.prototypes.keys())
+        self._build_pairwise_similarities()
         return self
 
     def add_confirmed_sample(self, label, image_path):
@@ -348,6 +358,7 @@ class PrototypeModel:
                 self.concept_counts[label][name] = total
         self._build_sub_prototypes([label])
         self._build_text_prototypes([label])
+        self._build_pairwise_similarities()
 
     def _feature_similarity(self, name, a, b):
         if name == 'color':
@@ -417,6 +428,88 @@ class PrototypeModel:
             return None, []
         knn_score = float(np.mean([x['score'] for x in top]))
         return knn_score, top
+
+    def _pair_key(self, a, b):
+        return tuple(sorted((str(a), str(b))))
+
+    def _build_pairwise_similarities(self):
+        self.pairwise_similarities = {}
+        if not self.pairwise_enabled:
+            return
+        labels = sorted(self.prototypes.keys())
+        for i, left in enumerate(labels):
+            left_proto = self.prototypes.get(left, {})
+            left_vec = left_proto.get(self.deep_feature_name)
+            if left_vec is None:
+                left_vec = left_proto.get(DEFAULT_DEEP_FEATURE_NAME)
+            if left_vec is None:
+                continue
+            for right in labels[i + 1:]:
+                right_proto = self.prototypes.get(right, {})
+                right_vec = right_proto.get(self.deep_feature_name)
+                if right_vec is None:
+                    right_vec = right_proto.get(DEFAULT_DEEP_FEATURE_NAME)
+                if right_vec is None:
+                    continue
+                self.pairwise_similarities[self._pair_key(left, right)] = _cosine_similarity(left_vec, right_vec)
+
+    def _pairwise_local_score(self, label, feats, weights):
+        neighbors = []
+        for item in self.sample_features.get(label, []):
+            sample_feats = item.get('features') or {}
+            score, detail = self._weighted_feature_score(feats, sample_feats, weights)
+            if detail:
+                neighbors.append(float(score))
+        if not neighbors:
+            return None
+        neighbors.sort(reverse=True)
+        top = neighbors[:self.pairwise_local_k]
+        return float(0.65 * top[0] + 0.35 * np.mean(top))
+
+    def _apply_pairwise_rerank(self, rows, feats, weights):
+        for row in rows:
+            row['pairwise_score'] = None
+            row['pairwise_score_weight_used'] = 0.0
+            row['pairwise_gate_reason'] = 'not_candidate'
+            row['pairwise_pair_similarity'] = None
+            row['pairwise_local_gap'] = None
+        if not self.pairwise_enabled or len(rows) < 2:
+            return
+        ranked = sorted(rows, key=lambda item: float(item['score']), reverse=True)
+        top = ranked[0]
+        second = ranked[1]
+        score_margin = float(top['score']) - float(second['score'])
+        pair_key = self._pair_key(top['label'], second['label'])
+        pair_similarity = self.pairwise_similarities.get(pair_key)
+        for row in (top, second):
+            row['pairwise_pair_similarity'] = pair_similarity
+        if score_margin > self.pairwise_max_margin:
+            for row in (top, second):
+                row['pairwise_gate_reason'] = 'score_margin_too_large'
+            return
+        if pair_similarity is not None and pair_similarity < self.pairwise_min_pair_similarity:
+            for row in (top, second):
+                row['pairwise_gate_reason'] = 'pair_not_similar'
+            return
+        top_local = self._pairwise_local_score(top['label'], feats, weights)
+        second_local = self._pairwise_local_score(second['label'], feats, weights)
+        if top_local is None or second_local is None:
+            for row in (top, second):
+                row['pairwise_gate_reason'] = 'missing_local_evidence'
+            return
+        top['pairwise_score'] = top_local
+        second['pairwise_score'] = second_local
+        local_gap = abs(top_local - second_local)
+        for row in (top, second):
+            row['pairwise_local_gap'] = local_gap
+        if local_gap < self.pairwise_min_local_gap:
+            for row in (top, second):
+                row['pairwise_gate_reason'] = 'weak_local_gap'
+            return
+        for row in (top, second):
+            row['pairwise_score_weight_used'] = self.pairwise_score_weight
+            row['pairwise_gate_reason'] = 'local_evidence'
+            row['score'] = (1.0 - self.pairwise_score_weight) * float(row['score']) + self.pairwise_score_weight * float(row['pairwise_score'])
 
     def _label_prompt_text(self, label):
         return str(label).replace('_', ' ').replace('-', ' ').strip()
@@ -606,6 +699,7 @@ class PrototypeModel:
                 row['score'] = (1.0 - cw) * float(row['score']) + cw * float(concept_score)
             if row.get('concept_top_gap') is None:
                 row['concept_top_gap'] = None
+        self._apply_pairwise_rerank(rows, feats, weights)
         results = rows
         results.sort(key=lambda x: x['score'], reverse=True)
         return results
@@ -651,6 +745,14 @@ class PrototypeModel:
                     'enable': self.text_enabled,
                     'score_weight': self.text_score_weight,
                     'prompt_templates': self.text_prompt_templates,
+                },
+                'pairwise_rerank': {
+                    'enable': self.pairwise_enabled,
+                    'local_k': self.pairwise_local_k,
+                    'score_weight': self.pairwise_score_weight,
+                    'max_score_margin': self.pairwise_max_margin,
+                    'min_pair_similarity': self.pairwise_min_pair_similarity,
+                    'min_local_gap': self.pairwise_min_local_gap,
                 },
                 'concept_gate': {
                     'enable': self.concept_gate_enabled,

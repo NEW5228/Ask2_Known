@@ -18,7 +18,7 @@ from ask2know.inference.prototype_model import PrototypeModel
 from ask2know.learning.weights import AdaptiveWeights
 from ask2know.utils.io_utils import ensure_dir, load_yaml, save_json
 
-VERSION = '0.4.4.1'
+VERSION = '0.4.4.2'
 
 
 def class_names(objects):
@@ -114,6 +114,11 @@ def main():
                     'subprototype_top_gap': None if item.get('subprototype_top_gap') is None else round(float(item['subprototype_top_gap']), 6),
                     'knn_score': None if item.get('knn_score') is None else round(float(item['knn_score']), 6),
                     'text_semantic_score': None if item.get('text_semantic_score') is None else round(float(item['text_semantic_score']), 6),
+                    'pairwise_score': None if item.get('pairwise_score') is None else round(float(item['pairwise_score']), 6),
+                    'pairwise_score_weight_used': round(float(item.get('pairwise_score_weight_used', 0.0)), 6),
+                    'pairwise_gate_reason': item.get('pairwise_gate_reason'),
+                    'pairwise_pair_similarity': None if item.get('pairwise_pair_similarity') is None else round(float(item['pairwise_pair_similarity']), 6),
+                    'pairwise_local_gap': None if item.get('pairwise_local_gap') is None else round(float(item['pairwise_local_gap']), 6),
                     'concept_score': None if item.get('concept_score') is None else round(float(item['concept_score']), 6),
                     'concept_score_weight_used': round(float(item.get('concept_score_weight_used', 0.0)), 6),
                     'concept_gate_reason': item.get('concept_gate_reason'),

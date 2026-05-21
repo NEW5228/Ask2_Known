@@ -287,6 +287,88 @@ def test_subprototype_gate_allows_flip_when_base_margin_is_tiny():
     assert by_label['local_match']['subprototype_score_weight_used'] == 0.50
 
 
+def test_pairwise_rerank_uses_local_evidence_for_close_pair():
+    import numpy as np
+    from ask2know.inference.prototype_model import PrototypeModel
+
+    model = PrototypeModel(
+        ['image_embedding'],
+        concept_config={'enable': False},
+        similarity_config={
+            'knn': {'enable': False},
+            'sub_prototypes': {'enable': False},
+            'pairwise_rerank': {
+                'enable': True,
+                'local_k': 1,
+                'score_weight': 0.50,
+                'max_score_margin': 0.020,
+                'min_pair_similarity': 0.80,
+                'min_local_gap': 0.005,
+            },
+        },
+        deep_feature_config={'enable': False},
+    )
+    query = np.asarray([1.0, 0.0], dtype=np.float32)
+    model.prototypes = {
+        'base_top': {'image_embedding': np.asarray([0.991, 0.133862], dtype=np.float32)},
+        'local_match': {'image_embedding': np.asarray([0.985, 0.172554], dtype=np.float32)},
+    }
+    model.sample_features = {
+        'base_top': [{'path': 'a.jpg', 'features': {'image_embedding': np.asarray([0.96, 0.28], dtype=np.float32)}}],
+        'local_match': [{'path': 'b.jpg', 'features': {'image_embedding': query}}],
+    }
+    model._build_pairwise_similarities()
+    model._extract_primary_features = lambda path: {'image_embedding': query}
+
+    results = model.predict('sample.jpg', {'image_embedding': 1.0})
+    by_label = {row['label']: row for row in results}
+
+    assert results[0]['label'] == 'local_match'
+    assert by_label['local_match']['pairwise_gate_reason'] == 'local_evidence'
+    assert by_label['local_match']['pairwise_score_weight_used'] == 0.50
+
+
+def test_pairwise_rerank_skips_large_score_margin():
+    import numpy as np
+    from ask2know.inference.prototype_model import PrototypeModel
+
+    model = PrototypeModel(
+        ['image_embedding'],
+        concept_config={'enable': False},
+        similarity_config={
+            'knn': {'enable': False},
+            'sub_prototypes': {'enable': False},
+            'pairwise_rerank': {
+                'enable': True,
+                'local_k': 1,
+                'score_weight': 0.50,
+                'max_score_margin': 0.005,
+                'min_pair_similarity': 0.80,
+                'min_local_gap': 0.005,
+            },
+        },
+        deep_feature_config={'enable': False},
+    )
+    query = np.asarray([1.0, 0.0], dtype=np.float32)
+    model.prototypes = {
+        'clear_top': {'image_embedding': query},
+        'local_match': {'image_embedding': np.asarray([0.94, 0.341174], dtype=np.float32)},
+    }
+    model.sample_features = {
+        'clear_top': [{'path': 'a.jpg', 'features': {'image_embedding': np.asarray([0.95, 0.31225], dtype=np.float32)}}],
+        'local_match': [{'path': 'b.jpg', 'features': {'image_embedding': query}}],
+    }
+    model._build_pairwise_similarities()
+    model._extract_primary_features = lambda path: {'image_embedding': query}
+
+    results = model.predict('sample.jpg', {'image_embedding': 1.0})
+    by_label = {row['label']: row for row in results}
+
+    assert results[0]['label'] == 'clear_top'
+    assert by_label['clear_top']['pairwise_gate_reason'] == 'score_margin_too_large'
+    assert by_label['local_match']['pairwise_score_weight_used'] == 0.0
+
+
 def test_prototype_concept_gate_ignores_weak_concept_gap():
     from ask2know.inference.prototype_model import PrototypeModel
 
