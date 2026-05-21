@@ -13,11 +13,12 @@ from ask2know.features.feature_config import (
     parse_feature_config,
     resolve_deep_feature_config,
 )
+from ask2know.inference.diagnostics import diagnose_prediction
 from ask2know.inference.prototype_model import PrototypeModel
 from ask2know.learning.weights import AdaptiveWeights
 from ask2know.utils.io_utils import ensure_dir, load_yaml, save_json
 
-VERSION = '0.4.3'
+VERSION = '0.4.3.1'
 
 
 def class_names(objects):
@@ -56,6 +57,9 @@ def main():
 
     deep_feature_config = resolve_deep_feature_config(cfg)
     feature_spec = parse_feature_config(cfg, classes=labels or cfg.get('classes', []))
+    diagnostic_cfg = cfg.get('diagnostics', {})
+    low_margin_threshold = float(diagnostic_cfg.get('low_margin_threshold', 0.015))
+    weak_signal_threshold = float(diagnostic_cfg.get('weak_signal_threshold', 0.005))
     weights = AdaptiveWeights(
         initial_feature_weights(cfg, feature_spec),
         cfg['learning'].get('update_step', 0.07),
@@ -83,6 +87,12 @@ def main():
         predicted = results[0]['label'] if results else None
         true_label = sample['label']
         correct = predicted == true_label
+        diagnosis = diagnose_prediction(
+            results[:max(2, args.top_k)],
+            true_label=true_label,
+            low_margin_threshold=low_margin_threshold,
+            weak_signal_threshold=weak_signal_threshold,
+        )
         per_class[true_label]['total'] += 1
         per_class[true_label]['correct'] += 1 if correct else 0
         confusion[true_label][predicted or 'none'] += 1
@@ -99,13 +109,24 @@ def main():
                     'knn_score': None if item.get('knn_score') is None else round(float(item['knn_score']), 6),
                     'text_semantic_score': None if item.get('text_semantic_score') is None else round(float(item['text_semantic_score']), 6),
                     'concept_score': None if item.get('concept_score') is None else round(float(item['concept_score']), 6),
+                    'concept_score_weight_used': round(float(item.get('concept_score_weight_used', 0.0)), 6),
+                    'concept_gate_reason': item.get('concept_gate_reason'),
                 }
                 for item in results[:max(1, args.top_k)]
             ],
+            'diagnosis': diagnosis,
         })
 
     total = len(rows)
     correct_count = sum(1 for row in rows if row['correct'])
+    reason_counts = defaultdict(int)
+    review_count = 0
+    for row in rows:
+        diagnosis = row.get('diagnosis') or {}
+        if diagnosis.get('needs_review'):
+            review_count += 1
+        for reason in diagnosis.get('reason_codes') or []:
+            reason_counts[reason] += 1
     report = {
         'schema_version': VERSION,
         'dataset_dir': str(dataset_dir),
@@ -114,6 +135,12 @@ def main():
         'eval_sample_count': total,
         'accuracy': correct_count / max(1, total),
         'correct_count': correct_count,
+        'diagnostics': {
+            'low_margin_threshold': low_margin_threshold,
+            'weak_signal_threshold': weak_signal_threshold,
+            'needs_review_count': review_count,
+            'reason_counts': dict(sorted(reason_counts.items())),
+        },
         'per_class': {
             label: {
                 'total': item['total'],

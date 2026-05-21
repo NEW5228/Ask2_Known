@@ -136,6 +136,13 @@ class PrototypeModel:
             'a photo of a {label}',
             'a close-up photo of a {label}',
         ])
+        self.concept_gate_config = dict(self.similarity_config.get('concept_gate', {}))
+        self.concept_gate_enabled = bool(self.concept_gate_config.get('enable', True))
+        self.concept_gate_min_gap = max(0.0, float(self.concept_gate_config.get('min_top_gap', 0.035)))
+        self.concept_weak_score_weight = max(0.0, min(
+            self.concept_score_weight,
+            float(self.concept_gate_config.get('weak_score_weight', 0.0)),
+        ))
         self.deep_adapter = DeepFeatureAdapter(deep_feature_config, cache_dir=deep_cache_dir)
         self.deep_feature_name = self.deep_adapter.feature_name or DEFAULT_DEEP_FEATURE_NAME
         self.prototypes = {}
@@ -387,10 +394,26 @@ class PrototypeModel:
                 out[group] = float(np.mean(vals))
         return out
 
+    def _concept_weight_for_rows(self, rows, row):
+        if not self.concepts_enabled or row.get('concept_score') is None:
+            return 0.0, 'missing'
+        base_weight = max(0.0, min(0.8, self.concept_score_weight))
+        if not self.concept_gate_enabled:
+            return base_weight, 'ungated'
+        scored = [item for item in rows if item.get('concept_score') is not None]
+        if len(scored) < 2:
+            return self.concept_weak_score_weight, 'insufficient_competition'
+        ranked = sorted(scored, key=lambda item: float(item['concept_score']), reverse=True)
+        concept_gap = float(ranked[0]['concept_score']) - float(ranked[1]['concept_score'])
+        row['concept_top_gap'] = concept_gap
+        if concept_gap >= self.concept_gate_min_gap:
+            return base_weight, 'discriminative'
+        return self.concept_weak_score_weight, 'weak_gap'
+
     def predict(self, image_path, weights):
         feats = self._extract_primary_features(image_path)
         sample_concepts = self._concepts_from_features(feats) if self.concepts_enabled else {}
-        results = []
+        rows = []
         for label, proto in self.prototypes.items():
             prototype_score, detail = self._weighted_feature_score(feats, proto, weights)
             system_detail = {}
@@ -413,9 +436,7 @@ class PrototypeModel:
             if self.concepts_enabled and concept_proto:
                 concept_score = concept_similarity(sample_concepts, concept_proto)
                 detail['concept'] = concept_score
-                cw = max(0.0, min(0.8, self.concept_score_weight))
-                final = (1.0 - cw) * final + cw * concept_score
-            results.append({
+            rows.append({
                 'label': label,
                 'score': final,
                 'feature_score': feature_score,
@@ -430,6 +451,16 @@ class PrototypeModel:
                 'class_concepts': concept_proto,
                 'nearest_samples': nearest,
             })
+        for row in rows:
+            concept_score = row.get('concept_score')
+            cw, gate_reason = self._concept_weight_for_rows(rows, row)
+            row['concept_score_weight_used'] = cw
+            row['concept_gate_reason'] = gate_reason
+            if concept_score is not None and cw > 0.0:
+                row['score'] = (1.0 - cw) * float(row['score']) + cw * float(concept_score)
+            if row.get('concept_top_gap') is None:
+                row['concept_top_gap'] = None
+        results = rows
         results.sort(key=lambda x: x['score'], reverse=True)
         return results
 
@@ -458,6 +489,11 @@ class PrototypeModel:
                     'enable': self.text_enabled,
                     'score_weight': self.text_score_weight,
                     'prompt_templates': self.text_prompt_templates,
+                },
+                'concept_gate': {
+                    'enable': self.concept_gate_enabled,
+                    'min_top_gap': self.concept_gate_min_gap,
+                    'weak_score_weight': self.concept_weak_score_weight,
                 },
             },
             'deep_features': self.deep_adapter.metadata(),

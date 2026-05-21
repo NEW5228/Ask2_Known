@@ -1,3 +1,13 @@
+# a2k_v0.4.3.1 更新日志
+
+## v0.4.3.1 新增/调整
+
+- 新增通用识别诊断模块，评估报告会输出 low margin、prototype/kNN/text/concept 冲突或主导等 reason codes。
+- evaluate_unlabeled.py 为每个样本写入 diagnosis，并汇总 needs_review_count 与 reason_counts。
+- 新增 similarity.concept_gate，concept 只有在当前候选间有足够区分力时才按完整权重参与最终分数；弱区分时默认不强拉分。
+- 新增 diagnostics.low_margin_threshold 和 diagnostics.weak_signal_threshold 配置。
+- 项目版本升级为 0.4.3.1。
+
 # a2k_v0.4.3 更新日志
 
 ## v0.4.3 新增/调整

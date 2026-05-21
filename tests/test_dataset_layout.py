@@ -186,3 +186,46 @@ def test_prototype_text_semantic_score_can_break_ties():
 
     assert results[0]['label'] == 'cat'
     assert results[0]['text_semantic_score'] > results[1]['text_semantic_score']
+
+
+def test_prototype_concept_gate_ignores_weak_concept_gap():
+    from ask2know.inference.prototype_model import PrototypeModel
+
+    model = PrototypeModel(
+        ['image_embedding'],
+        concept_config={'enable': True, 'score_weight': 0.50},
+        similarity_config={'concept_gate': {'enable': True, 'min_top_gap': 0.10, 'weak_score_weight': 0.0}},
+        deep_feature_config={'enable': False},
+    )
+    model.prototypes = {
+        'a': {'image_embedding': [1.0, 0.0]},
+        'b': {'image_embedding': [0.9, 0.1]},
+    }
+    model.concept_prototypes = {
+        'a': {'round': 0.50},
+        'b': {'round': 0.54},
+    }
+    model._extract_primary_features = lambda path: {'image_embedding': [1.0, 0.0]}
+    model._concepts_from_features = lambda feats: {'round': 0.52}
+
+    results = model.predict('sample.jpg', {'image_embedding': 1.0})
+
+    assert results[0]['label'] == 'a'
+    assert results[0]['concept_score_weight_used'] == 0.0
+    assert results[0]['concept_gate_reason'] == 'weak_gap'
+
+
+def test_diagnose_prediction_reports_low_margin_and_sources():
+    from ask2know.inference.diagnostics import diagnose_prediction
+
+    results = [
+        {'label': 'wrong', 'score': 0.901, 'prototype_score': 0.95, 'knn_score': 0.80},
+        {'label': 'right', 'score': 0.895, 'prototype_score': 0.90, 'knn_score': 0.86},
+    ]
+
+    diagnosis = diagnose_prediction(results, true_label='right', low_margin_threshold=0.01, weak_signal_threshold=0.005)
+
+    assert diagnosis['needs_review'] is True
+    assert 'misclassified' in diagnosis['reason_codes']
+    assert 'prototype_led' in diagnosis['reason_codes']
+    assert 'true_label_supported_by_knn_score' in diagnosis['reason_codes']

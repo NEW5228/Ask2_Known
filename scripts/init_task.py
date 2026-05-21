@@ -15,7 +15,7 @@ from ask2know.features.feature_config import (
     resolve_feature_preset,
 )
 
-VERSION = '0.4.3'
+VERSION = '0.4.3.1'
 
 
 def write_json(path, data):
@@ -82,6 +82,14 @@ similarity:
     prompt_templates:
       - "a photo of a {{label}}"
       - "a close-up photo of a {{label}}"
+  concept_gate:
+    enable: true
+    min_top_gap: 0.035
+    weak_score_weight: 0.00
+
+diagnostics:
+  low_margin_threshold: 0.015
+  weak_signal_threshold: 0.005
 
 learning:
   initial_weights:
