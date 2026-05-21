@@ -2,7 +2,7 @@
 
 Ask2Know 是一个面向低样本图像识别任务的主动教学框架。
 
-当前版本：`0.4.2.1n`
+当前版本：`0.4.3`
 
 核心流程：
 
@@ -86,9 +86,9 @@ D:\a2k_test\<task_name>\datasets\unknown
 
 图片文件名可以任意。运行时会根据配置自动规范化训练集和 unknown 图片文件名。
 
-## v0.4.2.1n 数据目录和推荐流程
+## v0.4.3 数据目录和推荐流程
 
-v0.4.2.1n 推荐的主流程是：先为每个类别准备少量已知样本，放入 `datasets/train/<class>`，让系统从一个可靠的小训练集开始。`datasets/unknown/` 的自动粗分功能保留为辅助整理工具，不建议直接把粗分结果当成最终训练集。
+v0.4.3 推荐的主流程是：先为每个类别准备少量已知样本，放入 `datasets/train/<class>`，让系统从一个可靠的小训练集开始。`datasets/unknown/` 的自动粗分功能保留为辅助整理工具，不建议直接把粗分结果当成最终训练集。
 
 ```text
 datasets/train/<class>/       已确认训练样本，推荐主入口
@@ -98,7 +98,7 @@ datasets/unlabeled/<class>/   带真实标签的验证集，用于计算准确�
 
 `run_demo.py` 会读取 `datasets/unknown/` 作为主动学习样本。`datasets/unlabeled/<class>/` 不进入主动学习，只用于评估。
 
-## v0.4.2.1n Bootstrap 粗分功能
+## v0.4.3 Bootstrap 粗分功能
 
 如果用户手里只有一堆混合图片，可以先放入 `datasets/unknown/`，再用 bootstrap 脚本粗分：
 
@@ -172,6 +172,12 @@ similarity:
     enable: true
     k: 3
     score_weight: 0.20
+  text_semantic:
+    enable: true
+    score_weight: 0.08
+    prompt_templates:
+      - "a photo of a {label}"
+      - "a close-up photo of a {label}"
 
 concepts:
   enable: true
@@ -181,7 +187,7 @@ concepts:
 预测结果会显示分数来源，例如：
 
 ```text
-score sources: proto:0.731, knn:0.802, concept:0.744
+score sources: proto:0.731, knn:0.802, text:0.691, concept:0.744
 nearest: 0.817 D:\...\datasets\train\apple\apple_003.jpg
 ```
 
@@ -189,7 +195,8 @@ nearest: 0.817 D:\...\datasets\train\apple\apple_003.jpg
 
 - `proto`：当前图片和类别原型的相似度。
 - `knn`：当前图片和最近 confirmed 训练样本的相似度。
-- `concept`：当前图片和类别可解释概念原型的相似度。
+- 	ext：当前图片 CLIP embedding 和类别名文本 prompt embedding 的相似度。
+- concept：当前图片和类别可解释概念原型的相似度。
 - `nearest`：系统认为最相似的已知训练样本。
 
 ## 用户反馈
@@ -258,3 +265,5 @@ D:\a2k_test\fruit_task\datasets\train\cherry
 - OpenCV 浅层特征仍然保留，用于可解释提问和概念总结。
 - confirmed 样本进入 `datasets/train/<class>`。
 - candidate、rejected、unknown 样本进入 `sample_pools/`。
+
+

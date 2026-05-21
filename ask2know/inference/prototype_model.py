@@ -32,6 +32,14 @@ def _mean_vectors(vectors):
     return np.mean(np.stack(vectors), axis=0)
 
 
+def _l2_normalize(vec):
+    arr = np.asarray(vec, dtype=np.float32).reshape(-1)
+    norm = float(np.linalg.norm(arr))
+    if norm <= 1e-8:
+        return arr
+    return arr / norm
+
+
 def _hist_similarity(a, b):
     a = np.asarray(a, dtype=np.float32)
     b = np.asarray(b, dtype=np.float32)
@@ -121,9 +129,17 @@ class PrototypeModel:
         self.knn_enabled = bool(self.knn_config.get('enable', False))
         self.knn_k = max(1, int(self.knn_config.get('k', 3)))
         self.knn_score_weight = max(0.0, min(0.8, float(self.knn_config.get('score_weight', 0.20))))
+        self.text_config = dict(self.similarity_config.get('text_semantic', {}))
+        self.text_enabled = bool(self.text_config.get('enable', False))
+        self.text_score_weight = max(0.0, min(0.5, float(self.text_config.get('score_weight', 0.08))))
+        self.text_prompt_templates = list(self.text_config.get('prompt_templates') or [
+            'a photo of a {label}',
+            'a close-up photo of a {label}',
+        ])
         self.deep_adapter = DeepFeatureAdapter(deep_feature_config, cache_dir=deep_cache_dir)
         self.deep_feature_name = self.deep_adapter.feature_name or DEFAULT_DEEP_FEATURE_NAME
         self.prototypes = {}
+        self.text_prototypes = {}
         self.concept_prototypes = {}
         self.samples = {}
         self.sample_features = {}
@@ -200,6 +216,7 @@ class PrototypeModel:
                     for cname, value in self._concepts_from_features(feats).items():
                         concept_grouped[label].setdefault(cname, []).append(float(value))
         self.prototypes = {}
+        self.text_prototypes = {}
         self.concept_prototypes = {}
         for label, fdict in grouped.items():
             self.prototypes[label] = {}
@@ -214,6 +231,7 @@ class PrototypeModel:
             for name, values in cdict.items():
                 self.concept_prototypes[label][name] = float(np.mean(values))
                 self.concept_counts[label][name] = len(values)
+        self._build_text_prototypes(self.prototypes.keys())
         return self
 
     def add_confirmed_sample(self, label, image_path):
@@ -266,6 +284,7 @@ class PrototypeModel:
                 total = old_count + new_count
                 self.concept_prototypes[label][name] = (float(old) * old_count + new_mean * new_count) / total
                 self.concept_counts[label][name] = total
+        self._build_text_prototypes([label])
 
     def _feature_similarity(self, name, a, b):
         if name == 'color':
@@ -336,6 +355,30 @@ class PrototypeModel:
         knn_score = float(np.mean([x['score'] for x in top]))
         return knn_score, top
 
+    def _label_prompt_text(self, label):
+        return str(label).replace('_', ' ').replace('-', ' ').strip()
+
+    def _build_text_prototypes(self, labels):
+        if not self.text_enabled or not self.deep_adapter.is_enabled():
+            return
+        for label in labels:
+            readable = self._label_prompt_text(label)
+            prompts = [template.format(label=readable) for template in self.text_prompt_templates]
+            vectors = self.deep_adapter.extract_text_vectors(prompts)
+            if vectors:
+                self.text_prototypes[label] = _l2_normalize(_mean_vectors(vectors))
+
+    def _text_semantic_score(self, label, feats):
+        if not self.text_enabled:
+            return None
+        text_proto = self.text_prototypes.get(label)
+        image_vec = feats.get(self.deep_feature_name)
+        if image_vec is None:
+            image_vec = feats.get(DEFAULT_DEEP_FEATURE_NAME)
+        if text_proto is None or image_vec is None:
+            return None
+        return _cosine_similarity(image_vec, text_proto)
+
     def _group_detail(self, detail):
         out = {}
         for group, names in self.feature_groups.items():
@@ -360,19 +403,25 @@ class PrototypeModel:
                 kw = self.knn_score_weight
                 feature_score = (1.0 - kw) * prototype_score + kw * knn_score
             final = feature_score
+            text_score = self._text_semantic_score(label, feats)
+            if text_score is not None:
+                detail['text_semantic'] = text_score
+                tw = self.text_score_weight
+                final = (1.0 - tw) * final + tw * text_score
             concept_score = None
             concept_proto = self.concept_prototypes.get(label, {})
             if self.concepts_enabled and concept_proto:
                 concept_score = concept_similarity(sample_concepts, concept_proto)
                 detail['concept'] = concept_score
                 cw = max(0.0, min(0.8, self.concept_score_weight))
-                final = (1.0 - cw) * feature_score + cw * concept_score
+                final = (1.0 - cw) * final + cw * concept_score
             results.append({
                 'label': label,
                 'score': final,
                 'feature_score': feature_score,
                 'prototype_score': prototype_score,
                 'knn_score': knn_score,
+                'text_semantic_score': text_score,
                 'concept_score': concept_score,
                 'detail': detail,
                 'group_detail': self._group_detail(detail),
@@ -390,6 +439,10 @@ class PrototypeModel:
                 label: {k: v.tolist() for k, v in feats.items()}
                 for label, feats in self.prototypes.items()
             },
+            'text_prototypes': {
+                label: vec.tolist()
+                for label, vec in self.text_prototypes.items()
+            },
             'concept_prototypes': self.concept_prototypes,
             'concept_config': {
                 'enable': self.concepts_enabled,
@@ -401,6 +454,11 @@ class PrototypeModel:
                     'k': self.knn_k,
                     'score_weight': self.knn_score_weight,
                 },
+                'text_semantic': {
+                    'enable': self.text_enabled,
+                    'score_weight': self.text_score_weight,
+                    'prompt_templates': self.text_prompt_templates,
+                },
             },
             'deep_features': self.deep_adapter.metadata(),
             'feature_groups': self.feature_groups,
@@ -410,3 +468,4 @@ class PrototypeModel:
                 for label, paths in self.samples.items()
             },
         }
+

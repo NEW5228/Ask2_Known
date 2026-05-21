@@ -159,3 +159,30 @@ def test_bootstrap_review_rows_skip_single_image(tmp_path):
     assert [row['action'] for row in rows] == ['copy', 'skip']
     assert rows[0]['label'] == 'red_apple'
     assert rows[1]['review_candidate'] is True
+
+
+def test_prototype_text_semantic_score_can_break_ties():
+    import numpy as np
+    from ask2know.inference.prototype_model import PrototypeModel
+
+    model = PrototypeModel(
+        ['image_embedding'],
+        concept_config={'enable': False},
+        similarity_config={'text_semantic': {'enable': True, 'score_weight': 0.20}},
+        deep_feature_config={'enable': False},
+    )
+    same_proto = np.asarray([1.0, 0.0], dtype=np.float32)
+    model.prototypes = {
+        'cat': {'image_embedding': same_proto},
+        'dog': {'image_embedding': same_proto},
+    }
+    model.text_prototypes = {
+        'cat': np.asarray([1.0, 0.0], dtype=np.float32),
+        'dog': np.asarray([0.0, 1.0], dtype=np.float32),
+    }
+    model._extract_primary_features = lambda path: {'image_embedding': same_proto}
+
+    results = model.predict('sample.jpg', {'image_embedding': 1.0})
+
+    assert results[0]['label'] == 'cat'
+    assert results[0]['text_semantic_score'] > results[1]['text_semantic_score']

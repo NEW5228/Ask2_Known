@@ -1,3 +1,12 @@
+# a2k_v0.4.3 更新日志
+
+## v0.4.3 新增/调整
+
+- 新增 CLIP text semantic scoring：用类别名生成文本 prompt embedding，与图片 embedding 的相似度作为辅助识别信号。
+- similarity.text_semantic 支持配置 enable、score_weight 和 prompt_templates，默认新任务启用，权重为 0.08。
+- run_demo.py 和 evaluate_unlabeled.py 输出新增 text_semantic_score，便于观察文本语义分数对最终结果的影响。
+- 项目版本升级为 0.4.3。
+
 # a2k_v0.4.2.1n 更新日志
 
 ## v0.4.2.1n 修复
@@ -162,3 +171,4 @@ v0.3.5.1 是 v0.3.5 的稳定性补丁版，目标是在不破坏旧项目结构
 - v0.3.6：较明确的小功能/稳定性补丁
 
 只有 v0.3.x 的核心流程稳定后，才进入 v0.4.0。
+

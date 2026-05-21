@@ -5,7 +5,7 @@ import yaml
 
 from ask2know.sample_pool.manager import _safe_name
 
-VERSION = '0.4.2.1n'
+VERSION = '0.4.3'
 
 
 def load_json(path, default):

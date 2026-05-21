@@ -18,9 +18,9 @@ def _l2_normalize(vec):
 
 
 class DeepFeatureAdapter:
-    """Required CLIP image embedding adapter for Ask2Know v0.4.2.1n.
+    """Required CLIP image embedding adapter for Ask2Know v0.4.3.
 
-    v0.4.2.1n keeps OpenCLIP as the production embedding path. OpenCV embedding from
+    v0.4.3 keeps OpenCLIP as the production embedding path. OpenCV embedding from
     v0.4.0 is kept only as private legacy code and is not an accepted provider.
     """
 
@@ -79,8 +79,26 @@ class DeepFeatureAdapter:
         if self.provider in ('clip', 'open_clip'):
             return self._try_external_provider(img, self._open_clip_embedding)
         raise ValueError(
-            f'Deep feature provider {self.provider!r} is not supported in Ask2Know v0.4.2.1n. '
+            f'Deep feature provider {self.provider!r} is not supported in Ask2Know v0.4.3. '
             'Use provider: open_clip. OpenCV fallback is intentionally disabled.'
+        )
+
+    def extract_text_vectors(self, texts):
+        if not self.enabled:
+            return []
+        if self.provider in ('clip', 'open_clip'):
+            try:
+                return self._open_clip_text_embeddings(texts)
+            except Exception as exc:
+                self._runtime_error = str(exc)
+                raise RuntimeError(
+                    'CLIP text provider is required but unavailable. Install torch, torchvision, '
+                    'pillow, and open_clip_torch, and make sure the configured OpenCLIP '
+                    'model weights are cached or downloadable.'
+                ) from exc
+        raise ValueError(
+            f'Deep feature provider {self.provider!r} is not supported in Ask2Know v0.4.3. '
+            'Use provider: open_clip.'
         )
 
     def _try_external_provider(self, img, extractor):
@@ -95,6 +113,26 @@ class DeepFeatureAdapter:
             ) from exc
 
     def _open_clip_embedding(self, img):
+        rt = self._ensure_open_clip_runtime()
+        rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        pil = rt['image_cls'].fromarray(rgb)
+        tensor = rt['preprocess'](pil).unsqueeze(0).to(rt['device'])
+        with rt['torch'].no_grad():
+            vec = rt['model'].encode_image(tensor)
+        return _l2_normalize(vec.detach().cpu().numpy()[0])
+
+    def _open_clip_text_embeddings(self, texts):
+        prompts = [str(text) for text in texts or [] if str(text).strip()]
+        if not prompts:
+            return []
+        rt = self._ensure_open_clip_runtime()
+        tokens = rt['tokenizer'](prompts).to(rt['device'])
+        with rt['torch'].no_grad():
+            vecs = rt['model'].encode_text(tokens)
+        arr = vecs.detach().cpu().numpy()
+        return [_l2_normalize(row) for row in arr]
+
+    def _ensure_open_clip_runtime(self):
         if self._runtime is None:
             import torch
             import open_clip
@@ -108,6 +146,7 @@ class DeepFeatureAdapter:
             model_name = self.config.get('model_name', 'ViT-B-32')
             pretrained = self.config.get('pretrained', 'laion2b_s34b_b79k')
             model, _, preprocess = open_clip.create_model_and_transforms(model_name, pretrained=pretrained)
+            tokenizer = open_clip.get_tokenizer(model_name)
             model.eval()
             model.to(device)
             self._runtime = {
@@ -115,16 +154,10 @@ class DeepFeatureAdapter:
                 'image_cls': Image,
                 'model': model,
                 'preprocess': preprocess,
+                'tokenizer': tokenizer,
                 'device': device,
             }
-
-        rt = self._runtime
-        rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        pil = rt['image_cls'].fromarray(rgb)
-        tensor = rt['preprocess'](pil).unsqueeze(0).to(rt['device'])
-        with rt['torch'].no_grad():
-            vec = rt['model'].encode_image(tensor)
-        return _l2_normalize(vec.detach().cpu().numpy()[0])
+        return self._runtime
 
     def _transformers_embedding(self, img):
         if self._runtime is None:

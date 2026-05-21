@@ -17,7 +17,7 @@ from ask2know.inference.prototype_model import PrototypeModel
 from ask2know.learning.weights import AdaptiveWeights
 from ask2know.utils.io_utils import ensure_dir, load_yaml, save_json
 
-VERSION = '0.4.2.1n'
+VERSION = '0.4.3'
 
 
 def class_names(objects):
@@ -97,6 +97,7 @@ def main():
                     'score': round(float(item['score']), 6),
                     'prototype_score': round(float(item['prototype_score']), 6),
                     'knn_score': None if item.get('knn_score') is None else round(float(item['knn_score']), 6),
+                    'text_semantic_score': None if item.get('text_semantic_score') is None else round(float(item['text_semantic_score']), 6),
                     'concept_score': None if item.get('concept_score') is None else round(float(item['concept_score']), 6),
                 }
                 for item in results[:max(1, args.top_k)]

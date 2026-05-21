@@ -15,7 +15,7 @@ from ask2know.features.feature_config import (
     resolve_feature_preset,
 )
 
-VERSION = '0.4.2.1n'
+VERSION = '0.4.3'
 
 
 def write_json(path, data):
@@ -76,6 +76,12 @@ similarity:
     enable: true
     k: 3
     score_weight: 0.20
+  text_semantic:
+    enable: true
+    score_weight: 0.08
+    prompt_templates:
+      - "a photo of a {{label}}"
+      - "a close-up photo of a {{label}}"
 
 learning:
   initial_weights:

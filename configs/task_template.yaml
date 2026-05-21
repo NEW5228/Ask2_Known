@@ -47,6 +47,12 @@ similarity:
     enable: true
     k: 3
     score_weight: 0.20
+  text_semantic:
+    enable: true
+    score_weight: 0.08
+    prompt_templates:
+      - "a photo of a {label}"
+      - "a close-up photo of a {label}"
 
 learning:
   initial_weights:
