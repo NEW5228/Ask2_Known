@@ -215,6 +215,78 @@ def test_prototype_subprototype_score_can_break_mean_ties():
     assert results[0]['subprototype_score'] > results[1]['subprototype_score']
 
 
+def test_subprototype_gate_blocks_flip_when_prototype_vetoes():
+    import numpy as np
+    from ask2know.inference.prototype_model import PrototypeModel
+
+    model = PrototypeModel(
+        ['image_embedding'],
+        concept_config={'enable': False},
+        similarity_config={
+            'sub_prototypes': {
+                'enable': True,
+                'score_weight': 0.50,
+                'min_gain_over_prototype': 0.001,
+                'max_base_margin_for_flip': 0.010,
+                'rank_flip_prototype_veto_margin': 0.003,
+            }
+        },
+        deep_feature_config={'enable': False},
+    )
+    query = np.asarray([1.0, 0.0], dtype=np.float32)
+    model.prototypes = {
+        'prototype_supported': {'image_embedding': np.asarray([0.99, 0.141067], dtype=np.float32)},
+        'subprototype_supported': {'image_embedding': np.asarray([0.982, 0.188881], dtype=np.float32)},
+    }
+    model.sub_prototypes = {
+        'subprototype_supported': [query],
+    }
+    model._extract_primary_features = lambda path: {'image_embedding': query}
+
+    results = model.predict('sample.jpg', {'image_embedding': 1.0})
+    by_label = {row['label']: row for row in results}
+
+    assert results[0]['label'] == 'prototype_supported'
+    assert by_label['subprototype_supported']['subprototype_gate_reason'] == 'prototype_veto'
+    assert by_label['subprototype_supported']['subprototype_score_weight_used'] == 0.0
+
+
+def test_subprototype_gate_allows_flip_when_base_margin_is_tiny():
+    import numpy as np
+    from ask2know.inference.prototype_model import PrototypeModel
+
+    model = PrototypeModel(
+        ['image_embedding'],
+        concept_config={'enable': False},
+        similarity_config={
+            'sub_prototypes': {
+                'enable': True,
+                'score_weight': 0.50,
+                'min_gain_over_prototype': 0.001,
+                'max_base_margin_for_flip': 0.010,
+                'rank_flip_prototype_veto_margin': 0.003,
+            }
+        },
+        deep_feature_config={'enable': False},
+    )
+    query = np.asarray([1.0, 0.0], dtype=np.float32)
+    model.prototypes = {
+        'barely_base_top': {'image_embedding': np.asarray([0.986, 0.166745], dtype=np.float32)},
+        'local_match': {'image_embedding': np.asarray([0.982, 0.188881], dtype=np.float32)},
+    }
+    model.sub_prototypes = {
+        'local_match': [query],
+    }
+    model._extract_primary_features = lambda path: {'image_embedding': query}
+
+    results = model.predict('sample.jpg', {'image_embedding': 1.0})
+    by_label = {row['label']: row for row in results}
+
+    assert results[0]['label'] == 'local_match'
+    assert by_label['local_match']['subprototype_gate_reason'] == 'rank_flip_allowed'
+    assert by_label['local_match']['subprototype_score_weight_used'] == 0.50
+
+
 def test_prototype_concept_gate_ignores_weak_concept_gap():
     from ask2know.inference.prototype_model import PrototypeModel
 

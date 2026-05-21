@@ -15,7 +15,7 @@ from ask2know.features.feature_config import (
     resolve_feature_preset,
 )
 
-VERSION = '0.4.4'
+VERSION = '0.4.4.1'
 
 
 def write_json(path, data):
@@ -80,7 +80,13 @@ similarity:
     enable: true
     max_centers: 3
     min_samples_per_center: 8
-    score_weight: 0.12
+    score_weight: 0.06
+    mode: conservative
+    min_gain_over_prototype: 0.015
+    min_top_gap: 0.0
+    allow_rank_flip: true
+    max_base_margin_for_flip: 0.010
+    rank_flip_prototype_veto_margin: 0.003
   text_semantic:
     enable: true
     score_weight: 0.08

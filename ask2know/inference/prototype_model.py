@@ -174,7 +174,13 @@ class PrototypeModel:
         self.subprototype_enabled = bool(self.subprototype_config.get('enable', True))
         self.subprototype_max_centers = max(1, int(self.subprototype_config.get('max_centers', 3)))
         self.subprototype_min_samples = max(1, int(self.subprototype_config.get('min_samples_per_center', 8)))
-        self.subprototype_score_weight = max(0.0, min(0.5, float(self.subprototype_config.get('score_weight', 0.12))))
+        self.subprototype_score_weight = max(0.0, min(0.5, float(self.subprototype_config.get('score_weight', 0.06))))
+        self.subprototype_mode = str(self.subprototype_config.get('mode', 'conservative')).strip().lower()
+        self.subprototype_min_gain = max(0.0, float(self.subprototype_config.get('min_gain_over_prototype', 0.015)))
+        self.subprototype_min_top_gap = max(0.0, float(self.subprototype_config.get('min_top_gap', 0.0)))
+        self.subprototype_allow_rank_flip = bool(self.subprototype_config.get('allow_rank_flip', True))
+        self.subprototype_max_base_margin_for_flip = max(0.0, float(self.subprototype_config.get('max_base_margin_for_flip', 0.010)))
+        self.subprototype_prototype_veto_margin = max(0.0, float(self.subprototype_config.get('rank_flip_prototype_veto_margin', 0.003)))
         self.text_config = dict(self.similarity_config.get('text_semantic', {}))
         self.text_enabled = bool(self.text_config.get('enable', False))
         self.text_score_weight = max(0.0, min(0.5, float(self.text_config.get('score_weight', 0.08))))
@@ -448,6 +454,32 @@ class PrototypeModel:
             return None
         return max(_cosine_similarity(image_vec, center) for center in centers)
 
+    def _subprototype_weight_for_row(self, rows, row, base_top, sub_top, sub_gap, base_margin):
+        if not self.subprototype_enabled or row.get('subprototype_score') is None:
+            return 0.0, 'missing'
+        base_weight = self.subprototype_score_weight
+        gain = float(row['subprototype_score']) - float(row['prototype_score'])
+        row['subprototype_gain_over_prototype'] = gain
+        row['subprototype_top_gap'] = sub_gap
+        if self.subprototype_mode not in {'conservative', 'gated'}:
+            return base_weight, 'ungated'
+        if gain < self.subprototype_min_gain:
+            return 0.0, 'low_gain'
+        if row is base_top:
+            return base_weight, 'base_top_support'
+        if not self.subprototype_allow_rank_flip:
+            return 0.0, 'rank_flip_disabled'
+        if row is not sub_top:
+            return 0.0, 'not_subprototype_top'
+        if sub_gap < self.subprototype_min_top_gap:
+            return 0.0, 'weak_subprototype_gap'
+        if base_margin > self.subprototype_max_base_margin_for_flip:
+            return 0.0, 'base_margin_too_large'
+        prototype_advantage = float(base_top['prototype_score']) - float(row['prototype_score'])
+        if prototype_advantage > self.subprototype_prototype_veto_margin:
+            return 0.0, 'prototype_veto'
+        return base_weight, 'rank_flip_allowed'
+
     def _build_text_prototypes(self, labels):
         if not self.text_enabled or not self.deep_adapter.is_enabled():
             return
@@ -512,8 +544,6 @@ class PrototypeModel:
             subprototype_score = self._subprototype_score(label, feats)
             if subprototype_score is not None:
                 detail['subprototype'] = subprototype_score
-                sw = self.subprototype_score_weight
-                final = (1.0 - sw) * final + sw * subprototype_score
             text_score = self._text_semantic_score(label, feats)
             if text_score is not None:
                 detail['text_semantic'] = text_score
@@ -527,6 +557,7 @@ class PrototypeModel:
             rows.append({
                 'label': label,
                 'score': final,
+                'base_score': final,
                 'feature_score': feature_score,
                 'prototype_score': prototype_score,
                 'subprototype_score': subprototype_score,
@@ -540,6 +571,32 @@ class PrototypeModel:
                 'class_concepts': concept_proto,
                 'nearest_samples': nearest,
             })
+        base_ranked = sorted(rows, key=lambda item: float(item['base_score']), reverse=True)
+        base_top = base_ranked[0] if base_ranked else None
+        base_margin = (
+            float(base_ranked[0]['base_score']) - float(base_ranked[1]['base_score'])
+            if len(base_ranked) > 1 else 0.0
+        )
+        sub_ranked = sorted(
+            [row for row in rows if row.get('subprototype_score') is not None],
+            key=lambda item: float(item['subprototype_score']),
+            reverse=True,
+        )
+        sub_top = sub_ranked[0] if sub_ranked else None
+        sub_gap = (
+            float(sub_ranked[0]['subprototype_score']) - float(sub_ranked[1]['subprototype_score'])
+            if len(sub_ranked) > 1 else 0.0
+        )
+        for row in rows:
+            sw, sub_reason = self._subprototype_weight_for_row(rows, row, base_top, sub_top, sub_gap, base_margin)
+            row['subprototype_score_weight_used'] = sw
+            row['subprototype_gate_reason'] = sub_reason
+            if row.get('subprototype_gain_over_prototype') is None:
+                row['subprototype_gain_over_prototype'] = None
+            if row.get('subprototype_top_gap') is None:
+                row['subprototype_top_gap'] = sub_gap if sub_top is not None else None
+            if row.get('subprototype_score') is not None and sw > 0.0:
+                row['score'] = (1.0 - sw) * float(row['score']) + sw * float(row['subprototype_score'])
         for row in rows:
             concept_score = row.get('concept_score')
             cw, gate_reason = self._concept_weight_for_rows(rows, row)
@@ -583,6 +640,12 @@ class PrototypeModel:
                     'max_centers': self.subprototype_max_centers,
                     'min_samples_per_center': self.subprototype_min_samples,
                     'score_weight': self.subprototype_score_weight,
+                    'mode': self.subprototype_mode,
+                    'min_gain_over_prototype': self.subprototype_min_gain,
+                    'min_top_gap': self.subprototype_min_top_gap,
+                    'allow_rank_flip': self.subprototype_allow_rank_flip,
+                    'max_base_margin_for_flip': self.subprototype_max_base_margin_for_flip,
+                    'rank_flip_prototype_veto_margin': self.subprototype_prototype_veto_margin,
                 },
                 'text_semantic': {
                     'enable': self.text_enabled,

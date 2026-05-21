@@ -1,3 +1,12 @@
+# a2k_v0.4.4.1 更新日志
+
+## v0.4.4.1 调整
+
+- 将 sub-prototypes 改为保守门控：默认权重从 0.12 降到 0.06，只在局部中心相对主 prototype 有足够增益时参与加权。
+- rank flip 只在基础分差很小且原 top 类别没有明显 prototype 优势时允许，降低“修正一个错误但改错一个正确样本”的风险。
+- 评估报告新增 subprototype_score_weight_used、subprototype_gate_reason、subprototype_gain_over_prototype 和 subprototype_top_gap，便于复盘 sub-prototypes 是否真正参与了当前预测。
+- 项目版本升级为 0.4.4.1。
+
 # a2k_v0.4.4 更新日志
 
 ## v0.4.4 新增/调整

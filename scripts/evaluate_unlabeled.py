@@ -18,7 +18,7 @@ from ask2know.inference.prototype_model import PrototypeModel
 from ask2know.learning.weights import AdaptiveWeights
 from ask2know.utils.io_utils import ensure_dir, load_yaml, save_json
 
-VERSION = '0.4.4'
+VERSION = '0.4.4.1'
 
 
 def class_names(objects):
@@ -105,8 +105,13 @@ def main():
                 {
                     'label': item['label'],
                     'score': round(float(item['score']), 6),
+                    'base_score': round(float(item.get('base_score', item['score'])), 6),
                     'prototype_score': round(float(item['prototype_score']), 6),
                     'subprototype_score': None if item.get('subprototype_score') is None else round(float(item['subprototype_score']), 6),
+                    'subprototype_score_weight_used': round(float(item.get('subprototype_score_weight_used', 0.0)), 6),
+                    'subprototype_gate_reason': item.get('subprototype_gate_reason'),
+                    'subprototype_gain_over_prototype': None if item.get('subprototype_gain_over_prototype') is None else round(float(item['subprototype_gain_over_prototype']), 6),
+                    'subprototype_top_gap': None if item.get('subprototype_top_gap') is None else round(float(item['subprototype_top_gap']), 6),
                     'knn_score': None if item.get('knn_score') is None else round(float(item['knn_score']), 6),
                     'text_semantic_score': None if item.get('text_semantic_score') is None else round(float(item['text_semantic_score']), 6),
                     'concept_score': None if item.get('concept_score') is None else round(float(item['concept_score']), 6),
