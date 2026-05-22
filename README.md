@@ -2,7 +2,7 @@
 
 Ask2Know 是一个面向低样本图像识别任务的主动教学框架。
 
-当前版本：`0.4.5`
+当前版本：`0.4.6.1`
 
 核心流程：
 
@@ -165,6 +165,16 @@ deep_features:
   cache: true
   fallback_to_opencv: false
   include_augmented: false
+  multi_crop:
+    enable: true
+    crops:
+      - full
+      - center
+      - five_crop
+      - object
+      - head
+    center_ratio: 0.86
+    corner_ratio: 0.72
 
 similarity:
   mode: hybrid
@@ -196,6 +206,16 @@ similarity:
     max_score_margin: 0.018
     min_pair_similarity: 0.90
     min_local_gap: 0.008
+  crop_rerank:
+    enable: true
+    max_candidate_classes: 3
+    local_k: 5
+    score_weight: 0.18
+    max_score_margin: 0.018
+    min_pair_similarity: 0.94
+    min_local_gap: 0.006
+    use_full_crop: false
+    trigger_mode: margin_and_pair_similarity
   robust_prototype:
     enable: true
     deep_only: true
@@ -220,7 +240,7 @@ concepts:
 预测结果会显示分数来源，例如：
 
 ```text
-score sources: proto:0.731, subproto:0.814, knn:0.802, text:0.691, concept:0.744
+score sources: proto:0.731, subproto:0.814, knn:0.802, text:0.691, crop:0.826, concept:0.744
 nearest: 0.817 D:\...\datasets\train\apple\apple_003.jpg
 ```
 

@@ -1,3 +1,21 @@
+# a2k_v0.4.6.1 更新日志
+
+## v0.4.6.1 调整
+
+- deep_features.multi_crop 新增 object 和 head 两个语义倾向 crop：object 使用前景启发式主体框，head 使用主体上半部分作为头脸倾向区域。
+- similarity.crop_rerank 新增 trigger_mode，默认使用 margin_and_pair_similarity，避免 crop rerank 大范围介入非混淆样本。
+- 默认 crop rerank 权重下调为 0.18，触发 margin 收紧为 0.018，混淆对相似度阈值提高到 0.94。
+- 项目版本升级为 0.4.6.1。
+
+# a2k_v0.4.6 更新日志
+
+## v0.4.6 调整
+
+- 新增 deep_features.multi_crop，默认缓存 full、center 和 five_crop 的 CLIP embedding。
+- 新增 similarity.crop_rerank：仅在 top 候选低 margin 或高相似混淆对时，用局部 crop 最近邻证据修正候选类别分数。
+- 评估报告新增 crop_rerank_score、crop_rerank_gate_reason、crop_rerank_local_gap 等字段，便于判断 0.4.6 是否优于 0.4.5。
+- 项目版本升级为 0.4.6。
+
 # a2k_v0.4.5 更新日志
 
 ## v0.4.5 调整

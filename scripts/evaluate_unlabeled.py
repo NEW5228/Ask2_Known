@@ -18,7 +18,7 @@ from ask2know.inference.prototype_model import PrototypeModel
 from ask2know.learning.weights import AdaptiveWeights
 from ask2know.utils.io_utils import ensure_dir, load_yaml, save_json
 
-VERSION = '0.4.5'
+VERSION = '0.4.6.1'
 
 
 def class_names(objects):
@@ -119,6 +119,12 @@ def main():
                     'pairwise_gate_reason': item.get('pairwise_gate_reason'),
                     'pairwise_pair_similarity': None if item.get('pairwise_pair_similarity') is None else round(float(item['pairwise_pair_similarity']), 6),
                     'pairwise_local_gap': None if item.get('pairwise_local_gap') is None else round(float(item['pairwise_local_gap']), 6),
+                    'crop_rerank_score': None if item.get('crop_rerank_score') is None else round(float(item['crop_rerank_score']), 6),
+                    'crop_rerank_score_weight_used': round(float(item.get('crop_rerank_score_weight_used', 0.0)), 6),
+                    'crop_rerank_gate_reason': item.get('crop_rerank_gate_reason'),
+                    'crop_rerank_pair_similarity': None if item.get('crop_rerank_pair_similarity') is None else round(float(item['crop_rerank_pair_similarity']), 6),
+                    'crop_rerank_local_gap': None if item.get('crop_rerank_local_gap') is None else round(float(item['crop_rerank_local_gap']), 6),
+                    'crop_rerank_crop_count': int(item.get('crop_rerank_crop_count', 0)),
                     'concept_score': None if item.get('concept_score') is None else round(float(item['concept_score']), 6),
                     'concept_score_weight_used': round(float(item.get('concept_score_weight_used', 0.0)), 6),
                     'concept_gate_reason': item.get('concept_gate_reason'),

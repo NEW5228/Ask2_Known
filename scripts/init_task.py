@@ -15,7 +15,7 @@ from ask2know.features.feature_config import (
     resolve_feature_preset,
 )
 
-VERSION = '0.4.5'
+VERSION = '0.4.6.1'
 
 
 def write_json(path, data):
@@ -69,6 +69,16 @@ deep_features:
   cache: true
   fallback_to_opencv: false
   include_augmented: false
+  multi_crop:
+    enable: true
+    crops:
+      - full
+      - center
+      - five_crop
+      - object
+      - head
+    center_ratio: 0.86
+    corner_ratio: 0.72
 
 similarity:
   mode: hybrid
@@ -100,6 +110,16 @@ similarity:
     max_score_margin: 0.018
     min_pair_similarity: 0.90
     min_local_gap: 0.008
+  crop_rerank:
+    enable: true
+    max_candidate_classes: 3
+    local_k: 5
+    score_weight: 0.18
+    max_score_margin: 0.018
+    min_pair_similarity: 0.94
+    min_local_gap: 0.006
+    use_full_crop: false
+    trigger_mode: margin_and_pair_similarity
   robust_prototype:
     enable: true
     deep_only: true

@@ -227,6 +227,25 @@ class PrototypeModel:
         self.pairwise_max_margin = max(0.0, float(self.pairwise_config.get('max_score_margin', 0.018)))
         self.pairwise_min_pair_similarity = max(0.0, min(1.0, float(self.pairwise_config.get('min_pair_similarity', 0.90))))
         self.pairwise_min_local_gap = max(0.0, float(self.pairwise_config.get('min_local_gap', 0.008)))
+        self.crop_rerank_config = dict(
+            self.similarity_config.get('crop_rerank')
+            or self.similarity_config.get('confusion_rerank')
+            or {}
+        )
+        self.crop_rerank_enabled = bool(self.crop_rerank_config.get('enable', True))
+        self.crop_rerank_candidate_count = max(2, int(self.crop_rerank_config.get('max_candidate_classes', 3)))
+        self.crop_rerank_local_k = max(1, int(self.crop_rerank_config.get('local_k', 5)))
+        self.crop_rerank_score_weight = max(0.0, min(0.5, float(self.crop_rerank_config.get('score_weight', 0.18))))
+        self.crop_rerank_max_margin = max(0.0, float(self.crop_rerank_config.get('max_score_margin', 0.018)))
+        self.crop_rerank_min_pair_similarity = max(0.0, min(
+            1.0,
+            float(self.crop_rerank_config.get('min_pair_similarity', 0.94)),
+        ))
+        self.crop_rerank_min_local_gap = max(0.0, float(self.crop_rerank_config.get('min_local_gap', 0.006)))
+        self.crop_rerank_use_full_crop = bool(self.crop_rerank_config.get('use_full_crop', False))
+        self.crop_rerank_trigger_mode = str(
+            self.crop_rerank_config.get('trigger_mode', 'margin_and_pair_similarity')
+        ).strip().lower()
         self.robust_config = dict(self.similarity_config.get('robust_prototype', {}))
         self.robust_enabled = bool(self.robust_config.get('enable', True))
         self.robust_deep_only = bool(self.robust_config.get('deep_only', True))
@@ -280,6 +299,11 @@ class PrototypeModel:
     def _extract_primary_features(self, path):
         return self._attach_deep_features(extract_features(path), path=path)
 
+    def _extract_crop_embeddings_for_path(self, path):
+        if not (self.crop_rerank_enabled and self.deep_adapter.is_enabled()):
+            return []
+        return self.deep_adapter.extract_multi_crop_path(path)
+
     def _feature_list_for_sample(self, path):
         feats_list = [self._extract_primary_features(path)]
         for img in _augmented_images(path, self.augmentation_config):
@@ -308,6 +332,7 @@ class PrototypeModel:
                 self.sample_features.setdefault(label, []).append({
                     'path': sample['path'],
                     'features': feats_list[0],
+                    'crop_embeddings': self._extract_crop_embeddings_for_path(sample['path']),
                 })
             for feats in feats_list:
                 all_feature_names = list(self.feature_names) + list(self.system_feature_names)
@@ -363,6 +388,7 @@ class PrototypeModel:
             self.sample_features.setdefault(label, []).append({
                 'path': image_path,
                 'features': feats_list[0],
+                'crop_embeddings': self._extract_crop_embeddings_for_path(image_path),
             })
         self.prototypes.setdefault(label, {})
         self.feature_counts.setdefault(label, {})
@@ -486,7 +512,7 @@ class PrototypeModel:
 
     def _build_pairwise_similarities(self):
         self.pairwise_similarities = {}
-        if not self.pairwise_enabled:
+        if not (self.pairwise_enabled or self.crop_rerank_enabled):
             return
         labels = sorted(self.prototypes.keys())
         for i, left in enumerate(labels):
@@ -640,6 +666,110 @@ class PrototypeModel:
             row['pairwise_score_weight_used'] = self.pairwise_score_weight
             row['pairwise_gate_reason'] = 'local_evidence'
             row['score'] = (1.0 - self.pairwise_score_weight) * float(row['score']) + self.pairwise_score_weight * float(row['pairwise_score'])
+
+    def _crop_vectors_for_scoring(self, crop_embeddings):
+        vectors = []
+        for item in crop_embeddings or []:
+            if not self.crop_rerank_use_full_crop and item.get('crop_id') == 'full':
+                continue
+            vec = item.get('vector')
+            if vec is not None:
+                vectors.append(vec)
+        return vectors
+
+    def _crop_local_score(self, label, query_crops):
+        query_vectors = self._crop_vectors_for_scoring(query_crops)
+        if not query_vectors:
+            return None
+        candidate_scores = []
+        for item in self.sample_features.get(label, []):
+            sample_vectors = self._crop_vectors_for_scoring(item.get('crop_embeddings') or [])
+            for query_vec in query_vectors:
+                for sample_vec in sample_vectors:
+                    candidate_scores.append(_cosine_similarity(query_vec, sample_vec))
+        if not candidate_scores:
+            return None
+        candidate_scores.sort(reverse=True)
+        top = candidate_scores[:self.crop_rerank_local_k]
+        return float(0.70 * top[0] + 0.30 * np.mean(top))
+
+    def _apply_crop_rerank(self, rows, image_path):
+        for row in rows:
+            row['crop_rerank_score'] = None
+            row['crop_rerank_score_weight_used'] = 0.0
+            row['crop_rerank_gate_reason'] = 'not_candidate'
+            row['crop_rerank_pair_similarity'] = None
+            row['crop_rerank_local_gap'] = None
+            row['crop_rerank_crop_count'] = 0
+        if not self.crop_rerank_enabled or len(rows) < 2:
+            return
+        ranked = sorted(rows, key=lambda item: float(item['score']), reverse=True)
+        top = ranked[0]
+        second = ranked[1]
+        score_margin = float(top['score']) - float(second['score'])
+        pair_similarity = self.pairwise_similarities.get(self._pair_key(top['label'], second['label']))
+        candidates = ranked[:min(len(ranked), self.crop_rerank_candidate_count)]
+        for row in candidates:
+            row['crop_rerank_pair_similarity'] = pair_similarity
+
+        ambiguous_by_margin = score_margin <= self.crop_rerank_max_margin
+        ambiguous_by_pair = pair_similarity is not None and pair_similarity >= self.crop_rerank_min_pair_similarity
+        trigger_mode = self.crop_rerank_trigger_mode
+        if trigger_mode in {'margin_or_pair_similarity', 'or'}:
+            should_trigger = ambiguous_by_margin or ambiguous_by_pair
+        elif trigger_mode in {'margin_only', 'margin'}:
+            should_trigger = ambiguous_by_margin
+        elif trigger_mode in {'pair_similarity_only', 'pair_only', 'pair'}:
+            should_trigger = ambiguous_by_pair
+        else:
+            should_trigger = ambiguous_by_margin and ambiguous_by_pair
+        if not should_trigger:
+            reason = 'not_ambiguous'
+            if not ambiguous_by_margin:
+                reason = 'score_margin_too_large'
+            elif not ambiguous_by_pair:
+                reason = 'pair_similarity_too_low'
+            for row in candidates[:2]:
+                row['crop_rerank_gate_reason'] = reason
+            return
+
+        query_crops = self._extract_crop_embeddings_for_path(image_path)
+        query_vectors = self._crop_vectors_for_scoring(query_crops)
+        if not query_vectors:
+            for row in candidates:
+                row['crop_rerank_gate_reason'] = 'missing_query_crops'
+            return
+
+        scored = []
+        for row in candidates:
+            crop_score = self._crop_local_score(row['label'], query_crops)
+            row['crop_rerank_score'] = crop_score
+            row['crop_rerank_crop_count'] = len(query_vectors)
+            if crop_score is None:
+                row['crop_rerank_gate_reason'] = 'missing_label_crop_evidence'
+            else:
+                scored.append(row)
+        if len(scored) < 2:
+            for row in scored:
+                row['crop_rerank_gate_reason'] = 'insufficient_competition'
+            return
+
+        crop_ranked = sorted(scored, key=lambda item: float(item['crop_rerank_score']), reverse=True)
+        local_gap = float(crop_ranked[0]['crop_rerank_score']) - float(crop_ranked[1]['crop_rerank_score'])
+        for row in scored:
+            row['crop_rerank_local_gap'] = local_gap
+        if local_gap < self.crop_rerank_min_local_gap:
+            for row in scored:
+                row['crop_rerank_gate_reason'] = 'weak_crop_gap'
+            return
+
+        for row in scored:
+            row['crop_rerank_score_weight_used'] = self.crop_rerank_score_weight
+            row['crop_rerank_gate_reason'] = 'crop_local_evidence'
+            row['score'] = (
+                (1.0 - self.crop_rerank_score_weight) * float(row['score'])
+                + self.crop_rerank_score_weight * float(row['crop_rerank_score'])
+            )
 
     def _label_prompt_text(self, label):
         return str(label).replace('_', ' ').replace('-', ' ').strip()
@@ -830,6 +960,7 @@ class PrototypeModel:
             if row.get('concept_top_gap') is None:
                 row['concept_top_gap'] = None
         self._apply_pairwise_rerank(rows, feats, weights)
+        self._apply_crop_rerank(rows, image_path)
         results = rows
         results.sort(key=lambda x: x['score'], reverse=True)
         return results
@@ -883,6 +1014,17 @@ class PrototypeModel:
                     'max_score_margin': self.pairwise_max_margin,
                     'min_pair_similarity': self.pairwise_min_pair_similarity,
                     'min_local_gap': self.pairwise_min_local_gap,
+                },
+                'crop_rerank': {
+                    'enable': self.crop_rerank_enabled,
+                    'max_candidate_classes': self.crop_rerank_candidate_count,
+                    'local_k': self.crop_rerank_local_k,
+                    'score_weight': self.crop_rerank_score_weight,
+                    'max_score_margin': self.crop_rerank_max_margin,
+                    'min_pair_similarity': self.crop_rerank_min_pair_similarity,
+                    'min_local_gap': self.crop_rerank_min_local_gap,
+                    'use_full_crop': self.crop_rerank_use_full_crop,
+                    'trigger_mode': self.crop_rerank_trigger_mode,
                 },
                 'robust_prototype': {
                     'enable': self.robust_enabled,
