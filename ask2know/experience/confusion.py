@@ -359,3 +359,255 @@ class OnlineConfusionExperience:
             'stats': dict(self.stats),
             'pairs': pair_rows,
         }
+
+
+def _concept_match_gap(sample_concepts, label_concepts, other_concepts, concept):
+    value = _as_float((sample_concepts or {}).get(concept))
+    label_value = _as_float((label_concepts or {}).get(concept))
+    other_value = _as_float((other_concepts or {}).get(concept))
+    if value is None or label_value is None or other_value is None:
+        return None
+    return abs(value - other_value) - abs(value - label_value)
+
+
+class PairVisualRuleMemory:
+    """Learn pair-specific concept rules from earlier revealed mistakes."""
+
+    def __init__(
+        self,
+        weak_signal_threshold=0.005,
+        max_margin=0.04,
+        rule_weight=0.035,
+        max_adjustment=0.05,
+        min_observations=1,
+        min_concept_gap=0.10,
+        min_match_gap=0.04,
+        max_rules_per_pair=6,
+        max_examples=8,
+    ):
+        self.weak_signal_threshold = float(weak_signal_threshold)
+        self.max_margin = float(max_margin)
+        self.rule_weight = float(rule_weight)
+        self.max_adjustment = float(max_adjustment)
+        self.min_observations = int(min_observations)
+        self.min_concept_gap = float(min_concept_gap)
+        self.min_match_gap = float(min_match_gap)
+        self.max_rules_per_pair = int(max_rules_per_pair)
+        self.max_examples = int(max_examples)
+        self.pairs = {}
+        self.stats = {
+            'observed_errors': 0,
+            'observed_pairs': 0,
+            'learned_rule_votes': 0,
+            'applied': 0,
+            'changed_top1': 0,
+            'helped': 0,
+            'hurt': 0,
+        }
+
+    def _pair(self, label_a, label_b):
+        key = _unordered_pair_key(label_a, label_b)
+        if key not in self.pairs:
+            labels = sorted([str(label_a), str(label_b)])
+            self.pairs[key] = {
+                'classes': labels,
+                'observations': 0,
+                'rules': defaultdict(Counter),
+                'concept_stats': defaultdict(lambda: defaultdict(float)),
+                'examples': [],
+            }
+            self.stats['observed_pairs'] = len(self.pairs)
+        return self.pairs[key]
+
+    def _candidate_rules(self, true_item, wrong_item):
+        true_label = true_item.get('label')
+        sample_concepts = true_item.get('concepts') or wrong_item.get('concepts') or {}
+        true_concepts = true_item.get('class_concepts') or {}
+        wrong_concepts = wrong_item.get('class_concepts') or {}
+        rows = []
+        for concept in sorted(set(true_concepts) | set(wrong_concepts)):
+            tv = _as_float(true_concepts.get(concept), 0.0)
+            wv = _as_float(wrong_concepts.get(concept), 0.0)
+            gap = abs(tv - wv)
+            if gap < self.min_concept_gap:
+                continue
+            match_gap = _concept_match_gap(sample_concepts, true_concepts, wrong_concepts, concept)
+            if match_gap is None or match_gap < self.min_match_gap:
+                continue
+            rows.append({
+                'concept': concept,
+                'supports': true_label,
+                'direction': 'high' if tv >= wv else 'low',
+                'class_gap': float(gap),
+                'match_gap': float(match_gap),
+                'sample_value': _as_float(sample_concepts.get(concept), 0.0),
+                'support_value': float(tv),
+                'other_value': float(wv),
+            })
+        rows.sort(key=lambda item: (item['match_gap'], item['class_gap']), reverse=True)
+        return rows[:self.max_rules_per_pair]
+
+    def observe(self, sample):
+        true_label = sample.get('true_label')
+        predicted = sample.get('predicted_label')
+        if sample.get('correct') or not true_label or not predicted or true_label == predicted:
+            return
+        top_predictions = sample.get('top_predictions') or []
+        predicted_item = next((item for item in top_predictions if item.get('label') == predicted), None)
+        true_item = next((item for item in top_predictions if item.get('label') == true_label), None)
+        if not predicted_item or not true_item:
+            return
+        rules = self._candidate_rules(true_item, predicted_item)
+        if not rules:
+            return
+        pair = self._pair(true_label, predicted)
+        pair['observations'] += 1
+        self.stats['observed_errors'] += 1
+        for rule in rules:
+            concept = rule['concept']
+            pair['rules'][true_label][concept] += 1
+            stats = pair['concept_stats'][true_label + '|' + concept]
+            stats['votes'] += 1.0
+            stats['class_gap_sum'] += rule['class_gap']
+            stats['match_gap_sum'] += rule['match_gap']
+            stats['sample_value_sum'] += rule['sample_value']
+            stats['support_value_sum'] += rule['support_value']
+            stats['other_value_sum'] += rule['other_value']
+            self.stats['learned_rule_votes'] += 1
+        if len(pair['examples']) < self.max_examples:
+            pair['examples'].append({
+                'path': sample.get('path'),
+                'true_label': true_label,
+                'predicted_label': predicted,
+                'rules': rules[:3],
+            })
+
+    def apply(self, results):
+        adjusted = [dict(item) for item in (results or [])]
+        for item in adjusted:
+            item['visual_rule_delta'] = 0.0
+            item['visual_rule_gate_reason'] = 'disabled_or_no_pair_rules'
+            item['visual_rule_evidence'] = {}
+        info = {'applied': False, 'changed_top1': False, 'reason': 'not_enough_candidates', 'deltas': {}}
+        if len(adjusted) < 2:
+            return adjusted, info
+        top = adjusted[0]
+        second = adjusted[1]
+        top_label = top.get('label')
+        second_label = second.get('label')
+        margin = float(top.get('score', 0.0)) - float(second.get('score', 0.0))
+        if margin > self.max_margin:
+            for item in adjusted[:2]:
+                item['visual_rule_gate_reason'] = 'margin_too_large'
+            info['reason'] = 'margin_too_large'
+            return adjusted, info
+        pair = self.pairs.get(_unordered_pair_key(top_label, second_label))
+        if not pair or pair['observations'] < self.min_observations:
+            for item in adjusted[:2]:
+                item['visual_rule_gate_reason'] = 'no_pair_rules'
+            info['reason'] = 'no_pair_rules'
+            return adjusted, info
+
+        row_by_label = {item.get('label'): item for item in adjusted[:2]}
+        delta_by_label = {top_label: 0.0, second_label: 0.0}
+        evidence_by_label = {top_label: {}, second_label: {}}
+        for label in (top_label, second_label):
+            row = row_by_label.get(label)
+            other_label = second_label if label == top_label else top_label
+            other = row_by_label.get(other_label)
+            if not row or not other:
+                continue
+            sample_concepts = row.get('concepts') or other.get('concepts') or {}
+            label_concepts = row.get('class_concepts') or {}
+            other_concepts = other.get('class_concepts') or {}
+            rule_counter = pair['rules'].get(label)
+            if not rule_counter:
+                continue
+            for concept, votes in rule_counter.most_common(self.max_rules_per_pair):
+                match_gap = _concept_match_gap(sample_concepts, label_concepts, other_concepts, concept)
+                if match_gap is None or match_gap < self.min_match_gap:
+                    continue
+                stat = pair['concept_stats'].get(label + '|' + concept, {})
+                vote_count = int(votes)
+                avg_class_gap = float(stat.get('class_gap_sum', 0.0)) / max(1.0, float(stat.get('votes', vote_count)))
+                strength = min(3.0, float(vote_count)) * min(1.0, max(0.0, avg_class_gap)) * min(1.0, max(0.0, match_gap))
+                delta = self.rule_weight * strength
+                if delta <= 0.0:
+                    continue
+                delta_by_label[label] += delta
+                evidence_by_label[label][concept] = {
+                    'votes': vote_count,
+                    'match_gap': round(float(match_gap), 6),
+                    'avg_class_gap': round(float(avg_class_gap), 6),
+                    'delta': round(float(delta), 6),
+                }
+
+        for item in adjusted[:2]:
+            label = item.get('label')
+            delta = max(-self.max_adjustment, min(self.max_adjustment, delta_by_label.get(label, 0.0)))
+            item['visual_rule_delta'] = delta
+            item['visual_rule_gate_reason'] = 'applied'
+            item['visual_rule_evidence'] = evidence_by_label.get(label, {})
+            item['score'] = float(item.get('score', 0.0)) + delta
+        adjusted.sort(key=lambda item: item.get('score', 0.0), reverse=True)
+        self.stats['applied'] += 1
+        changed_top1 = adjusted[0].get('label') != top_label
+        if changed_top1:
+            self.stats['changed_top1'] += 1
+        info.update({
+            'applied': True,
+            'changed_top1': changed_top1,
+            'reason': 'applied',
+            'deltas': {label: round(float(delta), 6) for label, delta in delta_by_label.items()},
+        })
+        return adjusted, info
+
+    def record_outcome(self, raw_correct, visual_correct, changed_top1):
+        if not changed_top1:
+            return
+        if visual_correct and not raw_correct:
+            self.stats['helped'] += 1
+        elif raw_correct and not visual_correct:
+            self.stats['hurt'] += 1
+
+    def export(self):
+        rows = []
+        for key, pair in sorted(self.pairs.items()):
+            rule_rows = []
+            for label, counter in pair['rules'].items():
+                for concept, votes in counter.most_common():
+                    stat = pair['concept_stats'].get(label + '|' + concept, {})
+                    total = max(1.0, float(stat.get('votes', votes)))
+                    rule_rows.append({
+                        'supports': label,
+                        'concept': concept,
+                        'votes': int(votes),
+                        'avg_class_gap': float(stat.get('class_gap_sum', 0.0)) / total,
+                        'avg_match_gap': float(stat.get('match_gap_sum', 0.0)) / total,
+                        'avg_sample_value': float(stat.get('sample_value_sum', 0.0)) / total,
+                        'avg_support_value': float(stat.get('support_value_sum', 0.0)) / total,
+                        'avg_other_value': float(stat.get('other_value_sum', 0.0)) / total,
+                    })
+            rule_rows.sort(key=lambda item: (item['votes'], item['avg_match_gap'], item['avg_class_gap']), reverse=True)
+            rows.append({
+                'pair': key,
+                'classes': pair['classes'],
+                'observations': pair['observations'],
+                'rules': rule_rows,
+                'examples': pair['examples'],
+            })
+        return {
+            'schema_version': 'pair_visual_rule_memory_v1',
+            'settings': {
+                'weak_signal_threshold': self.weak_signal_threshold,
+                'max_margin': self.max_margin,
+                'rule_weight': self.rule_weight,
+                'max_adjustment': self.max_adjustment,
+                'min_observations': self.min_observations,
+                'min_concept_gap': self.min_concept_gap,
+                'min_match_gap': self.min_match_gap,
+                'max_rules_per_pair': self.max_rules_per_pair,
+            },
+            'stats': dict(self.stats),
+            'pairs': rows,
+        }

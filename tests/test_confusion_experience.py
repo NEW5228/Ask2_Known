@@ -54,7 +54,7 @@ def test_confusion_experience_report_summarizes_error_sources():
 
 
 def test_pairwise_user_note_becomes_question_hint(tmp_path):
-    manager = PairwiseExperienceManager(metadata_dir=tmp_path, version='0.4.6.2a')
+    manager = PairwiseExperienceManager(metadata_dir=tmp_path, version='0.4.6.2b')
 
     manager.record_corrections(
         'class_b',
@@ -102,3 +102,55 @@ def test_online_confusion_experience_learns_from_earlier_error():
     assert adjustment['changed_top1'] is True
     assert results[0]['label'] == 'class_a'
     assert memory.export()['stats']['observed_errors'] == 1
+
+
+def test_pair_visual_rule_memory_learns_pair_specific_concept_rule():
+    from ask2know.experience.confusion import PairVisualRuleMemory
+
+    memory = PairVisualRuleMemory(
+        min_concept_gap=0.10,
+        min_match_gap=0.02,
+        rule_weight=0.30,
+        max_adjustment=0.10,
+    )
+    first_error = {
+        'path': 'first.jpg',
+        'true_label': 'class_a',
+        'predicted_label': 'class_b',
+        'correct': False,
+        'top_predictions': [
+            {
+                'label': 'class_b',
+                'score': 0.51,
+                'concepts': {'fur_like': 0.88},
+                'class_concepts': {'fur_like': 0.20},
+            },
+            {
+                'label': 'class_a',
+                'score': 0.49,
+                'concepts': {'fur_like': 0.88},
+                'class_concepts': {'fur_like': 0.90},
+            },
+        ],
+    }
+    memory.observe(first_error)
+
+    results, adjustment = memory.apply([
+        {
+            'label': 'class_b',
+            'score': 0.51,
+            'concepts': {'fur_like': 0.88},
+            'class_concepts': {'fur_like': 0.20},
+        },
+        {
+            'label': 'class_a',
+            'score': 0.49,
+            'concepts': {'fur_like': 0.88},
+            'class_concepts': {'fur_like': 0.90},
+        },
+    ])
+
+    assert adjustment['applied'] is True
+    assert adjustment['changed_top1'] is True
+    assert results[0]['label'] == 'class_a'
+    assert results[0]['visual_rule_evidence']['fur_like']['votes'] == 1

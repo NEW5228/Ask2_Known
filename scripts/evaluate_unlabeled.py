@@ -14,13 +14,13 @@ from ask2know.features.feature_config import (
     parse_feature_config,
     resolve_deep_feature_config,
 )
-from ask2know.experience.confusion import OnlineConfusionExperience, build_confusion_experience_report
+from ask2know.experience.confusion import PairVisualRuleMemory, OnlineConfusionExperience, build_confusion_experience_report
 from ask2know.inference.diagnostics import diagnose_prediction
 from ask2know.inference.prototype_model import PrototypeModel
 from ask2know.learning.weights import AdaptiveWeights
 from ask2know.utils.io_utils import ensure_dir, load_yaml, save_json
 
-VERSION = '0.4.6.2a'
+VERSION = '0.4.6.2b'
 
 
 def class_names(objects):
@@ -57,6 +57,9 @@ def rounded_prediction(item):
         'online_experience_delta': round(float(item.get('online_experience_delta', 0.0)), 6),
         'online_experience_gate_reason': item.get('online_experience_gate_reason'),
         'online_experience_evidence': item.get('online_experience_evidence', {}),
+        'visual_rule_delta': round(float(item.get('visual_rule_delta', 0.0)), 6),
+        'visual_rule_gate_reason': item.get('visual_rule_gate_reason'),
+        'visual_rule_evidence': item.get('visual_rule_evidence', {}),
     }
 
 
@@ -73,6 +76,12 @@ def main():
     parser.add_argument('--online-adjustment-weight', type=float, default=0.02, help='Weight for each learned pair/source signal.')
     parser.add_argument('--online-max-adjustment', type=float, default=0.04, help='Maximum score delta from online experience per candidate.')
     parser.add_argument('--online-min-observations', type=int, default=1, help='Minimum earlier pair errors before online experience can apply.')
+    parser.add_argument('--disable-visual-rules', action='store_true', help='Disable pair-specific visual rule memory during online evaluation.')
+    parser.add_argument('--visual-rule-weight', type=float, default=0.035, help='Weight for pair-specific concept visual rules.')
+    parser.add_argument('--visual-rule-max-margin', type=float, default=0.04, help='Only apply visual rules when top-2 margin is at most this value.')
+    parser.add_argument('--visual-rule-max-adjustment', type=float, default=0.05, help='Maximum score delta from visual rules per candidate.')
+    parser.add_argument('--visual-rule-min-concept-gap', type=float, default=0.10, help='Minimum class concept gap required to learn a visual rule.')
+    parser.add_argument('--visual-rule-min-match-gap', type=float, default=0.04, help='Minimum sample-to-class match gap required to apply a visual rule.')
     args = parser.parse_args()
 
     cfg = load_yaml(args.config)
@@ -125,6 +134,7 @@ def main():
     ).fit(train_samples)
 
     online_memory = None
+    visual_rule_memory = None
     if args.online_experience:
         online_memory = OnlineConfusionExperience(
             weak_signal_threshold=weak_signal_threshold,
@@ -133,6 +143,16 @@ def main():
             max_adjustment=args.online_max_adjustment,
             min_observations=args.online_min_observations,
         )
+        if not args.disable_visual_rules:
+            visual_rule_memory = PairVisualRuleMemory(
+                weak_signal_threshold=weak_signal_threshold,
+                max_margin=args.visual_rule_max_margin,
+                rule_weight=args.visual_rule_weight,
+                max_adjustment=args.visual_rule_max_adjustment,
+                min_observations=args.online_min_observations,
+                min_concept_gap=args.visual_rule_min_concept_gap,
+                min_match_gap=args.visual_rule_min_match_gap,
+            )
 
     rows = []
     confusion = defaultdict(lambda: defaultdict(int))
@@ -144,6 +164,11 @@ def main():
         'helped_count': 0,
         'hurt_count': 0,
         'applied_count': 0,
+        'source_changed_top1_count': 0,
+        'visual_rule_applied_count': 0,
+        'visual_rule_changed_top1_count': 0,
+        'visual_rule_helped_count': 0,
+        'visual_rule_hurt_count': 0,
     }
 
     for idx, sample in enumerate(eval_samples):
@@ -152,8 +177,12 @@ def main():
         raw_correct = raw_predicted == sample['label']
         results = raw_results
         online_adjustment = {'applied': False, 'changed_top1': False, 'reason': 'disabled', 'deltas': {}}
+        visual_rule_adjustment = {'applied': False, 'changed_top1': False, 'reason': 'disabled', 'deltas': {}}
         if online_memory is not None:
             results, online_adjustment = online_memory.apply(raw_results)
+        after_source_predicted = results[0]['label'] if results else None
+        if visual_rule_memory is not None:
+            results, visual_rule_adjustment = visual_rule_memory.apply(results)
         predicted = results[0]['label'] if results else None
         true_label = sample['label']
         correct = predicted == true_label
@@ -166,36 +195,56 @@ def main():
         per_class[true_label]['total'] += 1
         per_class[true_label]['correct'] += 1 if correct else 0
         confusion[true_label][predicted or 'none'] += 1
+        after_source_correct = after_source_predicted == true_label
+        final_changed = predicted != raw_predicted
         if raw_correct:
             online_summary['raw_correct_count'] += 1
         if correct:
             online_summary['online_correct_count'] += 1
-        if online_adjustment.get('applied'):
-            online_summary['applied_count'] += 1
-        if online_adjustment.get('changed_top1'):
+        if final_changed:
             online_summary['changed_top1_count'] += 1
             if correct and not raw_correct:
                 online_summary['helped_count'] += 1
             elif raw_correct and not correct:
                 online_summary['hurt_count'] += 1
+        if online_adjustment.get('applied'):
+            online_summary['applied_count'] += 1
+        if online_adjustment.get('changed_top1'):
+            online_summary['source_changed_top1_count'] += 1
+        if visual_rule_adjustment.get('applied'):
+            online_summary['visual_rule_applied_count'] += 1
+        if visual_rule_adjustment.get('changed_top1'):
+            online_summary['visual_rule_changed_top1_count'] += 1
+            if correct and not after_source_correct:
+                online_summary['visual_rule_helped_count'] += 1
+            elif after_source_correct and not correct:
+                online_summary['visual_rule_hurt_count'] += 1
 
         row = {
             'stream_index': idx,
             'path': sample['path'],
             'true_label': true_label,
             'raw_predicted_label': raw_predicted,
+            'after_source_predicted_label': after_source_predicted,
             'predicted_label': predicted,
             'raw_correct': raw_correct,
+            'after_source_correct': after_source_correct,
             'correct': correct,
             'online_adjustment': online_adjustment,
+            'visual_rule_adjustment': visual_rule_adjustment,
             'top_predictions': [rounded_prediction(item) for item in results[:max(1, args.top_k)]],
             'raw_top_predictions': [rounded_prediction(item) for item in raw_results[:max(1, args.top_k)]],
             'diagnosis': diagnosis,
         }
         rows.append(row)
+        learn_row = dict(row)
+        learn_row['top_predictions'] = results[:max(1, args.top_k)]
         if online_memory is not None:
-            online_memory.record_outcome(raw_correct, correct, bool(online_adjustment.get('changed_top1')))
-            online_memory.observe(row)
+            online_memory.record_outcome(raw_correct, correct, bool(final_changed))
+            online_memory.observe(learn_row)
+        if visual_rule_memory is not None:
+            visual_rule_memory.record_outcome(after_source_correct, correct, bool(visual_rule_adjustment.get('changed_top1')))
+            visual_rule_memory.observe(learn_row)
 
     total = len(rows)
     correct_count = sum(1 for row in rows if row['correct'])
@@ -224,9 +273,11 @@ def main():
             'shuffle': bool(args.shuffle),
             'seed': args.seed if args.shuffle else None,
             'online_experience': bool(args.online_experience),
+            'visual_rules': visual_rule_memory is not None,
         },
         'online_experience_summary': online_summary,
         'online_experience': None if online_memory is None else online_memory.export(),
+        'visual_rule_memory': None if visual_rule_memory is None else visual_rule_memory.export(),
         'diagnostics': {
             'low_margin_threshold': low_margin_threshold,
             'weak_signal_threshold': weak_signal_threshold,
@@ -257,6 +308,8 @@ def main():
     save_json(confusion_report_path, confusion_experience)
     if online_memory is not None:
         save_json(output_dir / 'online_experience_report.json', online_memory.export())
+    if visual_rule_memory is not None:
+        save_json(output_dir / 'visual_rule_memory_report.json', visual_rule_memory.export())
 
     print(f'Evaluated {total} samples from {Path(dataset_dir) / "unlabeled"}')
     print(f'Accuracy: {correct_count}/{total} = {report["accuracy"]:.3f}')
@@ -270,12 +323,22 @@ def main():
             f'helped={online_summary["helped_count"]}, '
             f'hurt={online_summary["hurt_count"]}'
         )
+        if visual_rule_memory is not None:
+            print(
+                'Visual rule changes: '
+                f'applied={online_summary["visual_rule_applied_count"]}, '
+                f'changed_top1={online_summary["visual_rule_changed_top1_count"]}, '
+                f'helped={online_summary["visual_rule_helped_count"]}, '
+                f'hurt={online_summary["visual_rule_hurt_count"]}'
+            )
     for label, item in report['per_class'].items():
         print(f'{label}: {item["correct"]}/{item["total"]} = {item["accuracy"]:.3f}')
     print('Report:', report_path)
     print('Confusion experience:', confusion_report_path)
     if online_memory is not None:
         print('Online experience:', output_dir / 'online_experience_report.json')
+    if visual_rule_memory is not None:
+        print('Visual rule memory:', output_dir / 'visual_rule_memory_report.json')
     return 0
 
 

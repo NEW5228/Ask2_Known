@@ -1,3 +1,12 @@
+# a2k_v0.4.6.2b 更新日志
+
+## v0.4.6.2b 调整
+
+- 新增 PairVisualRuleMemory：从在线纠错中学习 pair-specific concept 视觉规则，而不是只记录哪个评分源曾经误导。
+- evaluate_unlabeled.py 默认在 --online-experience 下启用视觉规则，可用 --disable-visual-rules 关闭，并输出 visual_rule_memory_report.json。
+- 评估报告新增 visual_rule_delta、visual_rule_evidence、visual_rule_adjustment 和 visual_rule_memory，便于判断规则救回/改坏样本。
+- 版本命名为 0.4.6.2b，继续保留 0.4.6.x 实验线，不升级到 0.4.7。
+
 # a2k_v0.4.6.2a 更新日志
 
 ## v0.4.6.2a 调整
@@ -251,4 +260,3 @@ v0.3.5.1 是 v0.3.5 的稳定性补丁版，目标是在不破坏旧项目结构
 - v0.3.6：较明确的小功能/稳定性补丁
 
 只有 v0.3.x 的核心流程稳定后，才进入 v0.4.0。
-
