@@ -16,7 +16,7 @@ from ask2know.features.feature_config import resolve_deep_feature_config
 from ask2know.sample_pool.manager import SamplePoolManager, _safe_name
 from ask2know.utils.io_utils import load_yaml, save_json
 
-VERSION = '0.4.6.2'
+VERSION = '0.4.6.2a'
 
 
 def _normalize_rows(arr):

@@ -54,7 +54,7 @@ def test_confusion_experience_report_summarizes_error_sources():
 
 
 def test_pairwise_user_note_becomes_question_hint(tmp_path):
-    manager = PairwiseExperienceManager(metadata_dir=tmp_path, version='0.4.6.2')
+    manager = PairwiseExperienceManager(metadata_dir=tmp_path, version='0.4.6.2a')
 
     manager.record_corrections(
         'class_b',
@@ -68,3 +68,37 @@ def test_pairwise_user_note_becomes_question_hint(tmp_path):
 
     assert 'longer ears' in hint
     assert 'longer ears' in prompt
+
+
+def test_online_confusion_experience_learns_from_earlier_error():
+    from ask2know.experience.confusion import OnlineConfusionExperience
+
+    memory = OnlineConfusionExperience(
+        weak_signal_threshold=0.001,
+        max_margin=0.05,
+        adjustment_weight=2.0,
+        max_adjustment=0.05,
+        min_observations=1,
+    )
+    first_error = {
+        'path': 'first.jpg',
+        'true_label': 'class_a',
+        'predicted_label': 'class_b',
+        'correct': False,
+        'top_predictions': [
+            {'label': 'class_b', 'score': 0.51, 'knn_score': 0.30, 'prototype_score': 0.60},
+            {'label': 'class_a', 'score': 0.49, 'knn_score': 0.34, 'prototype_score': 0.58},
+        ],
+        'diagnosis': {'score_margin': 0.02},
+    }
+    memory.observe(first_error)
+
+    results, adjustment = memory.apply([
+        {'label': 'class_b', 'score': 0.51, 'knn_score': 0.30, 'prototype_score': 0.60},
+        {'label': 'class_a', 'score': 0.49, 'knn_score': 0.34, 'prototype_score': 0.58},
+    ])
+
+    assert adjustment['applied'] is True
+    assert adjustment['changed_top1'] is True
+    assert results[0]['label'] == 'class_a'
+    assert memory.export()['stats']['observed_errors'] == 1

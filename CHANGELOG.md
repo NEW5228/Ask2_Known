@@ -1,3 +1,12 @@
+# a2k_v0.4.6.2a 更新日志
+
+## v0.4.6.2a 调整
+
+- 新增 evaluate_unlabeled.py 的 --shuffle/--seed/--online-experience 流式评估模式，先预测再揭示真值，只把当前错误用于后续样本。
+- 新增 OnlineConfusionExperience：从早先的易混淆错误中学习 pair/source 证据，对低 margin 的 top1/top2 做轻量重排。
+- 评估报告新增 evaluation_mode、online_experience_summary、online_experience_report.json 和 raw_top_predictions，便于对比在线经验是否真实提升。
+- 版本命名为 0.4.6.2a，继续保留 0.4.6.2 主线，不升级到 0.4.7。
+
 # a2k_v0.4.6.2 更新日志
 
 ## v0.4.6.2 调整
