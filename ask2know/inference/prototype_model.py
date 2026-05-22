@@ -862,6 +862,49 @@ class PrototypeModel:
                 out[group] = float(np.mean(vals))
         return out
 
+    def pair_discriminative_summary(self, label_a, label_b, top_n=5):
+        proto_a = self.prototypes.get(label_a, {})
+        proto_b = self.prototypes.get(label_b, {})
+        group_rows = []
+        for group, names in self.feature_groups.items():
+            sims = []
+            for name in names:
+                if name in proto_a and name in proto_b:
+                    sims.append(self._feature_similarity(name, proto_a[name], proto_b[name]))
+            if sims:
+                similarity = float(np.mean(sims))
+                group_rows.append({
+                    'group': group,
+                    'prototype_similarity': similarity,
+                    'discriminative_gap': max(0.0, 1.0 - similarity),
+                })
+        group_rows.sort(key=lambda item: item['discriminative_gap'], reverse=True)
+
+        concept_rows = []
+        concepts_a = self.concept_prototypes.get(label_a, {})
+        concepts_b = self.concept_prototypes.get(label_b, {})
+        for name in sorted(set(concepts_a) | set(concepts_b)):
+            av = float(concepts_a.get(name, 0.0))
+            bv = float(concepts_b.get(name, 0.0))
+            gap = abs(av - bv)
+            if gap <= 0.0:
+                continue
+            concept_rows.append({
+                'concept': name,
+                'a_score': av,
+                'b_score': bv,
+                'stronger_label': label_a if av >= bv else label_b,
+                'gap': gap,
+            })
+        concept_rows.sort(key=lambda item: item['gap'], reverse=True)
+
+        return {
+            'labels': [label_a, label_b],
+            'top_group_differences': group_rows[:top_n],
+            'weak_group_differences': sorted(group_rows, key=lambda item: item['discriminative_gap'])[:top_n],
+            'top_concept_differences': concept_rows[:top_n],
+        }
+
     def _concept_weight_for_rows(self, rows, row):
         if not self.concepts_enabled or row.get('concept_score') is None:
             return 0.0, 'missing'

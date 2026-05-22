@@ -1,3 +1,12 @@
+# a2k_v0.4.6.2 更新日志
+
+## v0.4.6.2 调整
+
+- 新增 confusion_experience_report：评估时自动汇总易混淆类别对、错误来源、true label 是否出现在 top-k，以及候选判别特征。
+- PrototypeModel 新增 pair_discriminative_summary，用类别 prototype 和概念 prototype 自动总结类别对之间的潜在区分点。
+- 交互纠错后允许用户写一句区分依据，并写入 pairwise_experience.json，后续同类混淆提问会优先显示这条经验。
+- 版本号固定为 0.4.6.2；后续实验不再自动升级到 0.4.7。
+
 # a2k_v0.4.6.1 更新日志
 
 ## v0.4.6.1 调整

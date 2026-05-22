@@ -23,7 +23,7 @@ from ask2know.features.feature_config import (
     summarize_group_weights,
 )
 
-VERSION = '0.4.6.1'
+VERSION = '0.4.6.2'
 
 
 def open_image_file(image_path):
@@ -270,6 +270,7 @@ def ask_correction_reason(predicted_label, true_label, pairwise_manager, adaptiv
         option_map[key.upper()] = (reason_id, text, action)
         print(f'{key}. {text}')
     ans = input('请输入选项，可多选，例如 A,B 或 ABC；直接回车表示不确定: ').strip().upper()
+    free_note = input('可选：用一句话写下你区分这两个类别的依据，直接回车跳过: ').strip()
     selected_keys = _parse_multi_choice(ans, set(option_map.keys()))
     if not selected_keys:
         selected_keys = [
@@ -290,7 +291,7 @@ def ask_correction_reason(predicted_label, true_label, pairwise_manager, adaptiv
         expand_feature_adjustments(inc, feature_spec),
         expand_feature_adjustments(dec, feature_spec),
     )
-    pair = pairwise_manager.record_corrections(predicted_label, true_label, selected_items)
+    pair = pairwise_manager.record_corrections(predicted_label, true_label, selected_items, free_note=free_note)
 
     print('已记录类别对经验:', f'{predicted_label} vs {true_label}')
     print('错因:', '；'.join([x[1] for x in selected_items]))
@@ -301,6 +302,7 @@ def ask_correction_reason(predicted_label, true_label, pairwise_manager, adaptiv
         'predicted': predicted_label,
         'true_label': true_label,
         'reasons': [{'reason_id': x[0], 'reason_text': x[1]} for x in selected_items],
+        'user_discriminative_note': free_note,
         'weights_before': before,
         'weights_after': after,
         'pairwise': pair,
@@ -410,10 +412,14 @@ def make_experience_summary(pairwise_state, objects):
             'correction_count': pair.get('correction_count', 0),
             'useful_features': useful,
             'useful_concepts': pair.get('useful_concepts', {}),
+            'user_discriminative_notes': pair.get('user_discriminative_notes', []),
             'reason_counts': reasons,
             'short_text': ''
         }
-        if useful_concepts:
+        user_notes = [x.get('note', '') for x in pair.get('user_discriminative_notes', []) if x.get('note')]
+        if user_notes:
+            item['short_text'] = '用户经验：' + '；'.join(user_notes[-2:])
+        elif useful_concepts:
             ranked = sorted(useful_concepts.items(), key=lambda x: x[1], reverse=True)
             item['short_text'] = '、'.join([x[0] for x in ranked[:4]]) + ' 可能是这组类别的重要基础视觉概念。'
         elif useful:

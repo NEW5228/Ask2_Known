@@ -113,7 +113,7 @@ def pair_key(a, b):
 
 
 class PairwiseExperienceManager:
-    def __init__(self, metadata_dir=None, path=None, version='0.4.6.1'):
+    def __init__(self, metadata_dir=None, path=None, version='0.4.6.2'):
         self.version = version
         if path is not None:
             self.path = Path(path)
@@ -152,9 +152,13 @@ class PairwiseExperienceManager:
             'weak_concepts': {},
             'question_counts': {},
             'question_helpful': {},
+            'user_discriminative_notes': [],
             'notes': [],
             'last_updated': None,
         })
+        pair.setdefault('useful_concepts', {})
+        pair.setdefault('weak_concepts', {})
+        pair.setdefault('user_discriminative_notes', [])
         return pair
 
     def get_feature_bias(self, a, b):
@@ -214,6 +218,15 @@ class PairwiseExperienceManager:
             'note': free_note or ''
         }
         pair['notes'].append(note)
+        if free_note:
+            pair['user_discriminative_notes'].append({
+                'time': now,
+                'predicted': predicted,
+                'true_label': true_label,
+                'note': str(free_note).strip(),
+            })
+            if len(pair['user_discriminative_notes']) > 20:
+                pair['user_discriminative_notes'] = pair['user_discriminative_notes'][-20:]
         if len(pair['notes']) > 50:
             pair['notes'] = pair['notes'][-50:]
         pair['last_updated'] = now
@@ -228,6 +241,11 @@ class PairwiseExperienceManager:
         useful = sorted(pair.get('useful_features', {}).items(), key=lambda x: x[1], reverse=True)
         weak = sorted(pair.get('weak_features', {}).items(), key=lambda x: x[1], reverse=True)
         parts = []
+        user_notes = pair.get('user_discriminative_notes') or []
+        if user_notes:
+            recent = [item.get('note', '') for item in user_notes[-2:] if item.get('note')]
+            if recent:
+                parts.append('用户给过的区分依据：' + '；'.join(recent) + '。')
         if useful:
             parts.append('历史经验里，这两个类别更适合参考：' + '、'.join([x[0] for x in useful[:3]]) + '。')
         if weak:
@@ -236,6 +254,11 @@ class PairwiseExperienceManager:
 
     def pair_specific_question_hint(self, a, b):
         pair = self.get_pair(a, b)
+        user_notes = pair.get('user_discriminative_notes') or []
+        if user_notes:
+            note = next((item.get('note') for item in reversed(user_notes) if item.get('note')), '')
+            if note:
+                return '用户历史区分依据：' + note
         useful = sorted(pair.get('useful_features', {}).items(), key=lambda x: x[1], reverse=True)
         if useful:
             top = useful[0][0]

@@ -13,12 +13,13 @@ from ask2know.features.feature_config import (
     parse_feature_config,
     resolve_deep_feature_config,
 )
+from ask2know.experience.confusion import build_confusion_experience_report
 from ask2know.inference.diagnostics import diagnose_prediction
 from ask2know.inference.prototype_model import PrototypeModel
 from ask2know.learning.weights import AdaptiveWeights
 from ask2know.utils.io_utils import ensure_dir, load_yaml, save_json
 
-VERSION = '0.4.6.1'
+VERSION = '0.4.6.2'
 
 
 def class_names(objects):
@@ -144,6 +145,11 @@ def main():
             review_count += 1
         for reason in diagnosis.get('reason_codes') or []:
             reason_counts[reason] += 1
+    confusion_experience = build_confusion_experience_report(
+        rows,
+        model=model,
+        weak_signal_threshold=weak_signal_threshold,
+    )
     report = {
         'schema_version': VERSION,
         'dataset_dir': str(dataset_dir),
@@ -159,6 +165,7 @@ def main():
             'reason_counts': dict(sorted(reason_counts.items())),
         },
         'training_quality_report': model.training_quality_report,
+        'confusion_experience_report': confusion_experience,
         'per_class': {
             label: {
                 'total': item['total'],
@@ -176,13 +183,16 @@ def main():
     }
 
     report_path = output_dir / 'evaluation_report.json'
+    confusion_report_path = output_dir / 'confusion_experience_report.json'
     save_json(report_path, report)
+    save_json(confusion_report_path, confusion_experience)
 
     print(f'Evaluated {total} samples from {Path(dataset_dir) / "unlabeled"}')
     print(f'Accuracy: {correct_count}/{total} = {report["accuracy"]:.3f}')
     for label, item in report['per_class'].items():
         print(f'{label}: {item["correct"]}/{item["total"]} = {item["accuracy"]:.3f}')
     print('Report:', report_path)
+    print('Confusion experience:', confusion_report_path)
     return 0
 
 
