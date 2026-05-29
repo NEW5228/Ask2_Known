@@ -813,6 +813,161 @@ def animal_face_feature(img, mask):
     ], dtype=np.float32)
 
 
+def car_shape_feature(img, mask):
+    mask = _largest_component_mask(mask)
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return np.zeros(10, dtype=np.float32)
+
+    c = max(contours, key=cv2.contourArea)
+    area = max(1.0, cv2.contourArea(c))
+    peri = max(1.0, cv2.arcLength(c, True))
+    x, y, w, h = cv2.boundingRect(c)
+    rect_area = max(1.0, float(w * h))
+    aspect = float(w) / max(1.0, float(h))
+    solidity = area / max(1.0, cv2.contourArea(cv2.convexHull(c)))
+    extent = area / rect_area
+    circularity = min(4 * np.pi * area / (peri * peri + 1e-6), 1.0)
+
+    roi = mask[y:y+h, x:x+w]
+    if roi.size == 0 or h < 6 or w < 6:
+        top_ratio = mid_ratio = bottom_ratio = symmetry = roof_slope = 0.0
+    else:
+        top = roi[:max(1, h // 3), :]
+        mid = roi[max(1, h // 3):max(2, (2 * h) // 3), :]
+        bottom = roi[max(2, (2 * h) // 3):, :]
+        top_ratio = cv2.countNonZero(top) / max(1.0, float(top.size))
+        mid_ratio = cv2.countNonZero(mid) / max(1.0, float(mid.size))
+        bottom_ratio = cv2.countNonZero(bottom) / max(1.0, float(bottom.size))
+
+        flipped = cv2.flip(roi, 1)
+        overlap = cv2.countNonZero(cv2.bitwise_and(roi, flipped))
+        union = cv2.countNonZero(cv2.bitwise_or(roi, flipped))
+        symmetry = float(overlap) / max(1.0, float(union))
+
+        top_cols = np.where(top.max(axis=0) > 0)[0]
+        mid_cols = np.where(mid.max(axis=0) > 0)[0]
+        if top_cols.size and mid_cols.size:
+            top_width = (top_cols[-1] - top_cols[0] + 1) / max(1.0, float(w))
+            mid_width = (mid_cols[-1] - mid_cols[0] + 1) / max(1.0, float(w))
+            roof_slope = min(max(mid_width - top_width, 0.0) * 2.0, 1.0)
+        else:
+            roof_slope = 0.0
+
+    wide_body = min(max(aspect - 1.0, 0.0) / 2.4, 1.0)
+    tall_body = min(max((1.0 / max(aspect, 1e-6)) - 0.35, 0.0) / 1.4, 1.0)
+    car_outline = min(
+        0.32 * wide_body
+        + 0.20 * min(extent, 1.0)
+        + 0.18 * min(solidity, 1.0)
+        + 0.15 * symmetry
+        + 0.15 * roof_slope,
+        1.0,
+    )
+    return np.array([
+        car_outline,
+        wide_body,
+        tall_body,
+        min(aspect / 4.0, 1.0),
+        min(extent, 1.0),
+        min(solidity, 1.0),
+        circularity,
+        top_ratio,
+        mid_ratio,
+        bottom_ratio,
+    ], dtype=np.float32)
+
+
+def car_part_feature(img, mask):
+    mask = _largest_component_mask(mask)
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    masked_area = max(1.0, float(cv2.countNonZero(mask)))
+    if masked_area <= 1.0:
+        return np.zeros(10, dtype=np.float32)
+
+    edges = cv2.Canny(gray, 45, 135)
+    edge_mask = cv2.bitwise_and(edges, edges, mask=mask)
+    lines = cv2.HoughLinesP(edge_mask, 1, np.pi / 180, threshold=20, minLineLength=18, maxLineGap=5)
+    horizontal = vertical = diagonal = 0.0
+    total_len = 0.0
+    if lines is not None:
+        for line in lines[:, 0, :]:
+            x1, y1, x2, y2 = [float(v) for v in line]
+            dx = x2 - x1
+            dy = y2 - y1
+            length = max(1.0, float(np.hypot(dx, dy)))
+            angle = abs(float(np.degrees(np.arctan2(dy, dx))))
+            total_len += length
+            if angle < 18 or angle > 162:
+                horizontal += length
+            elif 72 < angle < 108:
+                vertical += length
+            elif 25 < angle < 155:
+                diagonal += length
+    if total_len > 0:
+        horizontal /= total_len
+        vertical /= total_len
+        diagonal /= total_len
+
+    x, y, w, h = cv2.boundingRect(mask)
+    roi_mask = mask[y:y+h, x:x+w]
+    roi_gray = gray[y:y+h, x:x+w]
+    roi_hsv = hsv[y:y+h, x:x+w]
+    if roi_mask.size == 0 or h < 8 or w < 8:
+        grille_like = light_pair = badge_region = glass_region = 0.0
+    else:
+        front_band = np.zeros_like(roi_mask)
+        front_band[int(h * 0.35):int(h * 0.72), int(w * 0.25):int(w * 0.75)] = roi_mask[int(h * 0.35):int(h * 0.72), int(w * 0.25):int(w * 0.75)]
+        band_edges = cv2.bitwise_and(edges[y:y+h, x:x+w], edges[y:y+h, x:x+w], mask=front_band)
+        grille_like = min(float(cv2.countNonZero(band_edges)) / max(1.0, float(cv2.countNonZero(front_band))) * 6.0, 1.0)
+
+        bright = ((roi_hsv[:, :, 2] > 185) & (roi_hsv[:, :, 1] < 100) & (roi_mask > 0)).astype(np.uint8) * 255
+        component_count, _, stats, centers = cv2.connectedComponentsWithStats(bright, 8)
+        components = []
+        for idx in range(1, component_count):
+            area = float(stats[idx, cv2.CC_STAT_AREA])
+            if 3 <= area <= masked_area * 0.05:
+                components.append((float(centers[idx][0]), float(centers[idx][1]), area))
+        light_pair = 0.0
+        for i, left in enumerate(components):
+            for right in components[i + 1:]:
+                dx = abs(right[0] - left[0]) / max(1.0, float(w))
+                dy = abs(right[1] - left[1]) / max(1.0, float(h))
+                if 0.25 <= dx <= 0.85 and dy <= 0.18:
+                    light_pair = max(light_pair, min(dx + (1.0 - dy), 1.0))
+
+        center = roi_hsv[int(h * 0.35):int(h * 0.68), int(w * 0.36):int(w * 0.64)]
+        if center.size:
+            center_sat = float(center[:, :, 1].mean()) / 255.0
+            center_val_std = min(float(center[:, :, 2].std()) / 80.0, 1.0)
+            badge_region = min(0.45 * center_sat + 0.55 * center_val_std, 1.0)
+        else:
+            badge_region = 0.0
+
+        upper = roi_hsv[:max(1, int(h * 0.42)), :, :]
+        upper_mask = roi_mask[:max(1, int(h * 0.42)), :]
+        if cv2.countNonZero(upper_mask):
+            low_sat = ((upper[:, :, 1] < 70) & (upper[:, :, 2] > 60) & (upper_mask > 0)).sum()
+            glass_region = min(float(low_sat) / max(1.0, float(cv2.countNonZero(upper_mask))) * 1.8, 1.0)
+        else:
+            glass_region = 0.0
+
+    edge_density = float(cv2.countNonZero(edge_mask)) / masked_area
+    return np.array([
+        grille_like,
+        light_pair,
+        badge_region,
+        glass_region,
+        min(edge_density * 5.0, 1.0),
+        horizontal,
+        vertical,
+        diagonal,
+        min(total_len / max(1.0, masked_area * 0.15), 1.0),
+        min(cv2.Laplacian(gray, cv2.CV_64F)[mask > 0].var() / 1200.0, 1.0),
+    ], dtype=np.float32)
+
+
 def text_mark_feature(img, mask):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     masked_area = max(1.0, float(cv2.countNonZero(mask)))
@@ -973,6 +1128,8 @@ def extract_features_from_image(img):
         'animal_shape': animal_shape_feature(img, mask),
         'fur_texture': fur_texture_feature(img, mask),
         'animal_face': animal_face_feature(img, mask),
+        'car_shape': car_shape_feature(img, mask),
+        'car_part': car_part_feature(img, mask),
         'text_mark': text_mark_feature(img, mask),
         'sign_symbol': sign_symbol_feature(img, mask),
     }

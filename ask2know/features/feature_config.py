@@ -39,6 +39,17 @@ PET_CLASS_NAMES = {
     '猫', '狗', '小猫', '小狗', '宠物', '动物',
 }
 
+CAR_BRAND_CLASS_NAMES = {
+    'am_general', 'acura', 'alfa_romeo', 'aston_martin', 'audi', 'bmw',
+    'bentley', 'bugatti', 'buick', 'cadillac', 'chevrolet', 'chrysler',
+    'daewoo', 'dodge', 'eagle', 'fiat', 'ferrari', 'fisker', 'ford',
+    'gmc', 'geo', 'honda', 'hummer', 'hyundai', 'infiniti', 'isuzu',
+    'jaguar', 'jeep', 'lamborghini', 'land_rover', 'lincoln', 'mini',
+    'mazda', 'mclaren', 'mercedes_benz', 'mitsubishi', 'nissan',
+    'plymouth', 'porsche', 'ram', 'rolls_royce', 'scion', 'spyker',
+    'suzuki', 'tesla', 'toyota', 'volkswagen', 'volvo', 'smart',
+}
+
 PRESET_FEATURES = {
     'general': {
         'color': ['color'],
@@ -66,6 +77,16 @@ PRESET_FEATURES = {
         'texture': ['texture', 'fur_texture'],
         'surface': ['surface_mark'],
         'part': ['animal_face'],
+        'size': ['size'],
+        'text': ['text_mark'],
+        'sign': ['sign_symbol'],
+    },
+    'car': {
+        'color': ['color'],
+        'shape': ['contour', 'car_shape'],
+        'texture': ['texture'],
+        'surface': ['surface_mark'],
+        'part': ['car_part'],
         'size': ['size'],
         'text': ['text_mark'],
         'sign': ['sign_symbol'],
@@ -98,6 +119,7 @@ PRESET_DEFAULT_GROUPS = {
     'general': ('color', 'shape', 'texture', 'surface', 'size'),
     'fruit': ('color', 'shape', 'texture', 'surface', 'part', 'size'),
     'pet': ('color', 'shape', 'texture', 'surface', 'part', 'size'),
+    'car': ('color', 'shape', 'texture', 'surface', 'part', 'size', 'text', 'sign'),
     'traffic_sign': ('color', 'shape', 'text', 'sign'),
 }
 
@@ -106,6 +128,8 @@ def infer_feature_preset(classes):
     names = {str(name).strip().lower() for name in (classes or [])}
     if names & TRAFFIC_SIGN_CLASS_NAMES:
         return 'traffic_sign'
+    if names & CAR_BRAND_CLASS_NAMES:
+        return 'car'
     if names & PET_CLASS_NAMES:
         return 'pet'
     return 'fruit' if names & FRUIT_CLASS_NAMES else 'general'
@@ -116,7 +140,7 @@ def resolve_feature_preset(preset, classes=None):
     if preset == 'auto':
         return infer_feature_preset(classes)
     if preset not in PRESET_FEATURES:
-        raise ValueError(f'Unsupported feature preset: {preset}. Use auto, general, fruit, pet, or traffic_sign.')
+        raise ValueError(f'Unsupported feature preset: {preset}. Use auto, general, fruit, pet, car, or traffic_sign.')
     return preset
 
 
@@ -126,10 +150,10 @@ def resolve_deep_feature_config(cfg):
     if isinstance(raw, dict):
         merged.update(raw)
     if not bool(merged.get('enable', True)):
-        raise ValueError('Ask2Know v0.4.61.0 requires deep_features.enable: true with provider: open_clip.')
+        raise ValueError('Ask2Know v0.4.61.1 requires deep_features.enable: true with provider: open_clip.')
     provider = str(merged.get('provider', 'open_clip')).strip().lower()
     if provider not in ('clip', 'open_clip'):
-        raise ValueError('Ask2Know v0.4.61.0 requires deep_features.provider: open_clip.')
+        raise ValueError('Ask2Know v0.4.61.1 requires deep_features.provider: open_clip.')
     merged['provider'] = provider
     merged['fallback_to_opencv'] = False
     return merged

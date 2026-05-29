@@ -188,6 +188,53 @@ def test_prototype_text_semantic_score_can_break_ties():
     assert results[0]['text_semantic_score'] > results[1]['text_semantic_score']
 
 
+def test_car_preset_is_inferred_for_car_brand_classes():
+    from ask2know.features.feature_config import parse_feature_config
+
+    cfg = {
+        'features': {
+            'preset': 'auto',
+            'groups': {
+                'color': True,
+                'shape': True,
+                'texture': True,
+                'surface': True,
+                'part': True,
+                'size': True,
+                'text': True,
+                'sign': True,
+            },
+            'system': {'quality': True},
+        },
+        'deep_features': {'enable': True, 'provider': 'open_clip'},
+    }
+
+    spec = parse_feature_config(cfg, classes=['ford', 'toyota'])
+
+    assert spec['preset'] == 'car'
+    assert 'car_shape' in spec['group_features']['shape']
+    assert 'car_part' in spec['group_features']['part']
+
+
+def test_car_preset_default_groups_include_badge_and_shape_cues():
+    from ask2know.features.feature_config import parse_feature_config
+
+    cfg = {
+        'features': {
+            'preset': 'car',
+            'groups': {},
+            'system': {'quality': True},
+        },
+        'deep_features': {'enable': True, 'provider': 'open_clip'},
+    }
+
+    spec = parse_feature_config(cfg, classes=['ford'])
+
+    assert spec['groups']['text'] is True
+    assert spec['groups']['sign'] is True
+    assert spec['groups']['part'] is True
+
+
 def test_prototype_subprototype_score_can_break_mean_ties():
     import numpy as np
     from ask2know.inference.prototype_model import PrototypeModel

@@ -2,7 +2,7 @@
 
 Ask2Know 是一个面向低样本图像识别任务的主动教学框架。
 
-当前版本：`0.4.61.0`
+当前版本：`0.4.61.1`
 
 核心流程：
 
@@ -55,6 +55,7 @@ python scripts\init_task.py --name pet_task --classes cat dog --output D:\a2k_te
 - `general`
 - `fruit`
 - `pet`
+- `car`
 - `traffic_sign`
 
 用户可选特征：
@@ -128,6 +129,12 @@ python scripts\bootstrap_clusters.py --config D:\a2k_test\<task_name>\configs\ta
 
 ```bat
 python scripts\evaluate_unlabeled.py --config D:\a2k_test\<task_name>\configs\task_config.yaml
+```
+
+在线评估可模拟用户逐张确认标签，并默认把所有已确认样本增量加入模型：
+
+```bat
+python scripts\evaluate_unlabeled.py --config D:\a2k_test\<task_name>\configs\task_config.yaml --online-experience
 ```
 
 评估报告会写入：

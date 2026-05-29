@@ -474,6 +474,10 @@ class PrototypeModel:
             return _vector_similarity(a, b, scale=4.9)
         if name == 'animal_face':
             return _vector_similarity(a, b, scale=5.3)
+        if name == 'car_shape':
+            return _vector_similarity(a, b, scale=5.1)
+        if name == 'car_part':
+            return _vector_similarity(a, b, scale=5.2)
         if name == 'text_mark':
             return _vector_similarity(a, b, scale=5.0)
         if name == 'sign_symbol':

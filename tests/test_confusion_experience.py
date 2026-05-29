@@ -54,7 +54,7 @@ def test_confusion_experience_report_summarizes_error_sources():
 
 
 def test_pairwise_user_note_becomes_question_hint(tmp_path):
-    manager = PairwiseExperienceManager(metadata_dir=tmp_path, version='0.4.61.0')
+    manager = PairwiseExperienceManager(metadata_dir=tmp_path, version='0.4.61.1')
 
     manager.record_corrections(
         'class_b',

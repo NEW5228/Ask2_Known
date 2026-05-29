@@ -1,3 +1,13 @@
+# a2k_v0.4.61.1 更新日志
+
+## v0.4.61.1 调整
+
+- 新增 car preset：auto 可根据常见汽车品牌类名选择汽车品牌识别模板，默认启用颜色、车身轮廓、纹理、表面、部件、尺寸、字标和标识线索。
+- 新增 car_shape 和 car_part 内部视觉信号，用轻量特征模拟车身轮廓、格栅、灯组、车窗、徽标/字标区域等汽车品牌识别线索。
+- init_task.py 支持 --feature-preset car，并为汽车品牌生成 car/vehicle/front grille/badge/logo/wordmark 相关 CLIP 文本 prompt。
+- evaluate_unlabeled.py 的 --online-experience 默认使用 --online-model-update all，让用户确认过的正确样本和纠错样本都能增量加入模型。
+- 项目版本升级为 0.4.61.1。
+
 # a2k_v0.4.61.0 更新日志
 
 ## v0.4.61.0 调整

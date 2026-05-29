@@ -15,7 +15,21 @@ from ask2know.features.feature_config import (
     resolve_feature_preset,
 )
 
-VERSION = '0.4.61.0'
+VERSION = '0.4.61.1'
+
+
+def prompt_templates_for_preset(feature_preset):
+    if feature_preset == 'car':
+        return [
+            'a photo of a {label} car',
+            'a photo of a {label} vehicle',
+            'the front grille and badge of a {label} car',
+            'the logo or wordmark on a {label} vehicle',
+        ]
+    return [
+        'a photo of a {label}',
+        'a close-up photo of a {label}',
+    ]
 
 
 def write_json(path, data):
@@ -34,6 +48,10 @@ def write_yaml_like(path, task_name, dataset_dir, output_dir, project_root, clas
         f'    {name}: {DEFAULT_GROUP_WEIGHTS[name]:.2f}'
         for name in weight_groups
         if name in DEFAULT_GROUP_WEIGHTS
+    ])
+    prompt_lines = '\n'.join([
+        f'      - "{template}"'
+        for template in prompt_templates_for_preset(feature_preset)
     ])
     text = f'''task:
   name: {task_name}
@@ -101,8 +119,7 @@ similarity:
     enable: true
     score_weight: 0.08
     prompt_templates:
-      - "a photo of a {{label}}"
-      - "a close-up photo of a {{label}}"
+{prompt_lines}
   pairwise_rerank:
     enable: true
     local_k: 5
@@ -202,7 +219,7 @@ def main():
     parser.add_argument('--name', required=True, help='任务名，例如 fruit_task 或 vehicle_brand_demo')
     parser.add_argument('--classes', nargs='+', required=True, help='类别名，例如 apple banana pear 或 bmw audi benz')
     parser.add_argument('--output', default='.', help='任务输出根目录，例如 D:\\a2k_test。默认当前目录')
-    parser.add_argument('--feature-preset', choices=['auto', 'general', 'fruit', 'pet', 'traffic_sign'], default='auto', help='特征预设。auto 会根据类别名判断是否使用 fruit、pet 或 traffic_sign。')
+    parser.add_argument('--feature-preset', choices=['auto', 'general', 'fruit', 'pet', 'car', 'traffic_sign'], default='auto', help='特征预设。auto 会根据类别名判断是否使用 fruit、pet、car 或 traffic_sign。')
     parser.add_argument('--features', nargs='+', choices=list(USER_FEATURE_GROUPS), default=None, help='用户可选特征大类。quality 是系统质量检查，不在这里选择。')
     args = parser.parse_args()
 

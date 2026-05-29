@@ -20,7 +20,7 @@ from ask2know.inference.prototype_model import PrototypeModel
 from ask2know.learning.weights import AdaptiveWeights
 from ask2know.utils.io_utils import ensure_dir, load_yaml, save_json
 
-VERSION = '0.4.61.0'
+VERSION = '0.4.61.1'
 
 
 def class_names(objects):
@@ -81,7 +81,7 @@ def main():
     parser.add_argument('--online-min-observations', type=int, default=1, help='Minimum earlier pair errors before online experience can apply.')
     parser.add_argument('--online-min-sources-for-flip', type=int, default=2, help='Minimum supporting source types required before online memory may flip top-1.')
     parser.add_argument('--online-allow-negative-adjustments', action='store_true', help='Allow online memory to penalize labels from historically misleading sources.')
-    parser.add_argument('--online-model-update', choices=['none', 'mistakes', 'all'], default='mistakes', help='Add revealed evaluation samples back into the model during online evaluation.')
+    parser.add_argument('--online-model-update', choices=['none', 'mistakes', 'all'], default='all', help='Add revealed evaluation samples back into the model during online evaluation.')
     parser.add_argument('--disable-visual-rules', action='store_true', help='Disable pair-specific visual rule memory during online evaluation.')
     parser.add_argument('--visual-rule-weight', type=float, default=0.035, help='Weight for pair-specific concept visual rules.')
     parser.add_argument('--visual-rule-max-margin', type=float, default=0.04, help='Only apply visual rules when top-2 margin is at most this value.')
