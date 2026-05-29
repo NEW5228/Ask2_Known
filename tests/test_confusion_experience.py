@@ -54,7 +54,7 @@ def test_confusion_experience_report_summarizes_error_sources():
 
 
 def test_pairwise_user_note_becomes_question_hint(tmp_path):
-    manager = PairwiseExperienceManager(metadata_dir=tmp_path, version='0.4.6.2b')
+    manager = PairwiseExperienceManager(metadata_dir=tmp_path, version='0.4.61.0')
 
     manager.record_corrections(
         'class_b',
@@ -79,6 +79,7 @@ def test_online_confusion_experience_learns_from_earlier_error():
         adjustment_weight=2.0,
         max_adjustment=0.05,
         min_observations=1,
+        min_sources_for_flip=1,
     )
     first_error = {
         'path': 'first.jpg',
@@ -104,7 +105,127 @@ def test_online_confusion_experience_learns_from_earlier_error():
     assert memory.export()['stats']['observed_errors'] == 1
 
 
+def test_online_confusion_experience_requires_multiple_sources_for_default_flip():
+    from ask2know.experience.confusion import OnlineConfusionExperience
+
+    memory = OnlineConfusionExperience(
+        weak_signal_threshold=0.001,
+        max_margin=0.05,
+        adjustment_weight=2.0,
+        max_adjustment=0.05,
+        min_observations=1,
+    )
+    first_error = {
+        'path': 'first.jpg',
+        'true_label': 'class_a',
+        'predicted_label': 'class_b',
+        'correct': False,
+        'top_predictions': [
+            {'label': 'class_b', 'score': 0.51, 'knn_score': 0.30},
+            {'label': 'class_a', 'score': 0.49, 'knn_score': 0.34},
+        ],
+    }
+    memory.observe(first_error)
+
+    results, adjustment = memory.apply([
+        {'label': 'class_b', 'score': 0.51, 'knn_score': 0.30},
+        {'label': 'class_a', 'score': 0.49, 'knn_score': 0.34},
+    ])
+
+    assert adjustment['applied'] is True
+    assert adjustment['changed_top1'] is False
+    assert results[0]['label'] == 'class_b'
+    assert memory.export()['settings']['min_sources_for_flip'] == 2
+
+
+def test_online_confusion_experience_does_not_penalize_by_default():
+    from ask2know.experience.confusion import OnlineConfusionExperience
+
+    memory = OnlineConfusionExperience(
+        weak_signal_threshold=0.001,
+        max_margin=0.05,
+        adjustment_weight=2.0,
+        max_adjustment=0.05,
+        min_observations=1,
+    )
+    first_error = {
+        'path': 'first.jpg',
+        'true_label': 'class_a',
+        'predicted_label': 'class_b',
+        'correct': False,
+        'top_predictions': [
+            {'label': 'class_b', 'score': 0.51, 'knn_score': 0.40},
+            {'label': 'class_a', 'score': 0.49, 'knn_score': 0.30},
+        ],
+    }
+    memory.observe(first_error)
+
+    results, adjustment = memory.apply([
+        {'label': 'class_b', 'score': 0.51, 'knn_score': 0.40},
+        {'label': 'class_a', 'score': 0.49, 'knn_score': 0.30},
+    ])
+
+    assert adjustment['applied'] is True
+    assert adjustment['changed_top1'] is False
+    assert results[0]['label'] == 'class_b'
+    assert results[0]['online_experience_delta'] == 0.0
+    assert memory.export()['settings']['allow_negative_adjustments'] is False
+
+
 def test_pair_visual_rule_memory_learns_pair_specific_concept_rule():
+    from ask2know.experience.confusion import PairVisualRuleMemory
+
+    memory = PairVisualRuleMemory(
+        min_concept_gap=0.10,
+        min_match_gap=0.02,
+        rule_weight=0.30,
+        max_adjustment=0.10,
+        allow_rank_flip=True,
+    )
+    first_error = {
+        'path': 'first.jpg',
+        'true_label': 'class_a',
+        'predicted_label': 'class_b',
+        'correct': False,
+        'top_predictions': [
+            {
+                'label': 'class_b',
+                'score': 0.51,
+                'concepts': {'fur_like': 0.88},
+                'class_concepts': {'fur_like': 0.20},
+            },
+            {
+                'label': 'class_a',
+                'score': 0.49,
+                'concepts': {'fur_like': 0.88},
+                'class_concepts': {'fur_like': 0.90},
+            },
+        ],
+    }
+    memory.observe(first_error)
+
+    results, adjustment = memory.apply([
+        {
+            'label': 'class_b',
+            'score': 0.51,
+            'concepts': {'fur_like': 0.88},
+            'class_concepts': {'fur_like': 0.20},
+        },
+        {
+            'label': 'class_a',
+            'score': 0.49,
+            'concepts': {'fur_like': 0.88},
+            'class_concepts': {'fur_like': 0.90},
+        },
+    ])
+
+    assert adjustment['applied'] is True
+    assert adjustment['changed_top1'] is True
+    assert results[0]['label'] == 'class_a'
+    assert results[0]['visual_rule_evidence']['fur_like']['votes'] == 1
+
+
+def test_pair_visual_rule_memory_does_not_flip_top1_by_default():
     from ask2know.experience.confusion import PairVisualRuleMemory
 
     memory = PairVisualRuleMemory(
@@ -151,6 +272,6 @@ def test_pair_visual_rule_memory_learns_pair_specific_concept_rule():
     ])
 
     assert adjustment['applied'] is True
-    assert adjustment['changed_top1'] is True
-    assert results[0]['label'] == 'class_a'
-    assert results[0]['visual_rule_evidence']['fur_like']['votes'] == 1
+    assert adjustment['changed_top1'] is False
+    assert results[0]['label'] == 'class_b'
+    assert memory.export()['settings']['allow_rank_flip'] is False

@@ -15,7 +15,7 @@ from ask2know.features.feature_config import (
     resolve_feature_preset,
 )
 
-VERSION = '0.4.6.2b'
+VERSION = '0.4.61.0'
 
 
 def write_json(path, data):
@@ -120,6 +120,14 @@ similarity:
     min_local_gap: 0.006
     use_full_crop: false
     trigger_mode: margin_and_pair_similarity
+  late_fusion:
+    enable: true
+    max_candidate_classes: 3
+    weights:
+      base_score: 1.0
+      knn_score: 0.8
+      text_semantic_score: 0.8
+      crop_rerank_score: 0.4
   robust_prototype:
     enable: true
     deep_only: true

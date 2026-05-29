@@ -20,7 +20,7 @@ from ask2know.inference.prototype_model import PrototypeModel
 from ask2know.learning.weights import AdaptiveWeights
 from ask2know.utils.io_utils import ensure_dir, load_yaml, save_json
 
-VERSION = '0.4.6.2b'
+VERSION = '0.4.61.0'
 
 
 def class_names(objects):
@@ -51,6 +51,9 @@ def rounded_prediction(item):
         'crop_rerank_pair_similarity': None if item.get('crop_rerank_pair_similarity') is None else round(float(item['crop_rerank_pair_similarity']), 6),
         'crop_rerank_local_gap': None if item.get('crop_rerank_local_gap') is None else round(float(item['crop_rerank_local_gap']), 6),
         'crop_rerank_crop_count': int(item.get('crop_rerank_crop_count', 0)),
+        'late_fusion_score': None if item.get('late_fusion_score') is None else round(float(item['late_fusion_score']), 6),
+        'late_fusion_gate_reason': item.get('late_fusion_gate_reason'),
+        'late_fusion_evidence': item.get('late_fusion_evidence', {}),
         'concept_score': None if item.get('concept_score') is None else round(float(item['concept_score']), 6),
         'concept_score_weight_used': round(float(item.get('concept_score_weight_used', 0.0)), 6),
         'concept_gate_reason': item.get('concept_gate_reason'),
@@ -76,12 +79,17 @@ def main():
     parser.add_argument('--online-adjustment-weight', type=float, default=0.02, help='Weight for each learned pair/source signal.')
     parser.add_argument('--online-max-adjustment', type=float, default=0.04, help='Maximum score delta from online experience per candidate.')
     parser.add_argument('--online-min-observations', type=int, default=1, help='Minimum earlier pair errors before online experience can apply.')
+    parser.add_argument('--online-min-sources-for-flip', type=int, default=2, help='Minimum supporting source types required before online memory may flip top-1.')
+    parser.add_argument('--online-allow-negative-adjustments', action='store_true', help='Allow online memory to penalize labels from historically misleading sources.')
+    parser.add_argument('--online-model-update', choices=['none', 'mistakes', 'all'], default='mistakes', help='Add revealed evaluation samples back into the model during online evaluation.')
     parser.add_argument('--disable-visual-rules', action='store_true', help='Disable pair-specific visual rule memory during online evaluation.')
     parser.add_argument('--visual-rule-weight', type=float, default=0.035, help='Weight for pair-specific concept visual rules.')
     parser.add_argument('--visual-rule-max-margin', type=float, default=0.04, help='Only apply visual rules when top-2 margin is at most this value.')
     parser.add_argument('--visual-rule-max-adjustment', type=float, default=0.05, help='Maximum score delta from visual rules per candidate.')
+    parser.add_argument('--visual-rule-min-observations', type=int, default=2, help='Minimum earlier pair errors before visual rules can apply.')
     parser.add_argument('--visual-rule-min-concept-gap', type=float, default=0.10, help='Minimum class concept gap required to learn a visual rule.')
     parser.add_argument('--visual-rule-min-match-gap', type=float, default=0.04, help='Minimum sample-to-class match gap required to apply a visual rule.')
+    parser.add_argument('--visual-rule-allow-rank-flip', action='store_true', help='Allow visual rules to change the top-1 prediction.')
     args = parser.parse_args()
 
     cfg = load_yaml(args.config)
@@ -142,6 +150,8 @@ def main():
             adjustment_weight=args.online_adjustment_weight,
             max_adjustment=args.online_max_adjustment,
             min_observations=args.online_min_observations,
+            allow_negative_adjustments=args.online_allow_negative_adjustments,
+            min_sources_for_flip=args.online_min_sources_for_flip,
         )
         if not args.disable_visual_rules:
             visual_rule_memory = PairVisualRuleMemory(
@@ -149,9 +159,10 @@ def main():
                 max_margin=args.visual_rule_max_margin,
                 rule_weight=args.visual_rule_weight,
                 max_adjustment=args.visual_rule_max_adjustment,
-                min_observations=args.online_min_observations,
+                min_observations=args.visual_rule_min_observations,
                 min_concept_gap=args.visual_rule_min_concept_gap,
                 min_match_gap=args.visual_rule_min_match_gap,
+                allow_rank_flip=args.visual_rule_allow_rank_flip,
             )
 
     rows = []
@@ -169,6 +180,7 @@ def main():
         'visual_rule_changed_top1_count': 0,
         'visual_rule_helped_count': 0,
         'visual_rule_hurt_count': 0,
+        'model_update_count': 0,
     }
 
     for idx, sample in enumerate(eval_samples):
@@ -245,6 +257,11 @@ def main():
         if visual_rule_memory is not None:
             visual_rule_memory.record_outcome(after_source_correct, correct, bool(visual_rule_adjustment.get('changed_top1')))
             visual_rule_memory.observe(learn_row)
+        if online_memory is not None and args.online_model_update != 'none':
+            should_update_model = args.online_model_update == 'all' or not correct
+            if should_update_model:
+                model.add_confirmed_sample(true_label, sample['path'])
+                online_summary['model_update_count'] += 1
 
     total = len(rows)
     correct_count = sum(1 for row in rows if row['correct'])

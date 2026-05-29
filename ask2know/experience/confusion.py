@@ -184,13 +184,25 @@ def _unordered_pair_key(label_a, label_b):
 class OnlineConfusionExperience:
     """Use earlier revealed mistakes as weak pair-specific evidence for later samples."""
 
-    def __init__(self, weak_signal_threshold=0.005, max_margin=0.035, adjustment_weight=0.02, max_adjustment=0.04, min_observations=1, max_examples=8):
+    def __init__(
+        self,
+        weak_signal_threshold=0.005,
+        max_margin=0.035,
+        adjustment_weight=0.02,
+        max_adjustment=0.04,
+        min_observations=1,
+        max_examples=8,
+        allow_negative_adjustments=False,
+        min_sources_for_flip=2,
+    ):
         self.weak_signal_threshold = float(weak_signal_threshold)
         self.max_margin = float(max_margin)
         self.adjustment_weight = float(adjustment_weight)
         self.max_adjustment = float(max_adjustment)
         self.min_observations = int(min_observations)
         self.max_examples = int(max_examples)
+        self.allow_negative_adjustments = bool(allow_negative_adjustments)
+        self.min_sources_for_flip = max(1, int(min_sources_for_flip))
         self.pairs = {}
         self.stats = {'observed_errors': 0, 'observed_pairs': 0, 'applied': 0, 'changed_top1': 0, 'helped': 0, 'hurt': 0}
 
@@ -292,9 +304,9 @@ class OnlineConfusionExperience:
                 support_count = int(pair['support_sources'].get(label, {}).get(source, 0))
                 misleading_count = int(pair['misleading_sources'].get(label, {}).get(source, 0))
                 source_delta = 0.0
-                if support_count:
+                if support_count and source_gap > self.weak_signal_threshold:
                     source_delta += self.adjustment_weight * factor * min(support_count, 3) * source_gap
-                if misleading_count and source_gap > 0:
+                if self.allow_negative_adjustments and misleading_count and source_gap > 0:
                     source_delta -= self.adjustment_weight * factor * min(misleading_count, 3) * source_gap
                 if source_delta:
                     delta_by_label[label] += source_delta
@@ -304,6 +316,16 @@ class OnlineConfusionExperience:
                         'source_gap': round(float(source_gap), 6),
                         'delta': round(float(source_delta), 6),
                     }
+
+        support_source_count_by_label = {
+            label: sum(1 for evidence in sources.values() if evidence.get('support_count', 0) > 0)
+            for label, sources in evidence_by_label.items()
+        }
+        if (
+            delta_by_label.get(second_label, 0.0) > delta_by_label.get(top_label, 0.0)
+            and support_source_count_by_label.get(second_label, 0) < self.min_sources_for_flip
+        ):
+            delta_by_label[second_label] = 0.0
 
         for item in adjusted[:2]:
             label = item.get('label')
@@ -355,6 +377,8 @@ class OnlineConfusionExperience:
                 'adjustment_weight': self.adjustment_weight,
                 'max_adjustment': self.max_adjustment,
                 'min_observations': self.min_observations,
+                'allow_negative_adjustments': self.allow_negative_adjustments,
+                'min_sources_for_flip': self.min_sources_for_flip,
             },
             'stats': dict(self.stats),
             'pairs': pair_rows,
@@ -382,6 +406,7 @@ class PairVisualRuleMemory:
         min_observations=1,
         min_concept_gap=0.10,
         min_match_gap=0.04,
+        allow_rank_flip=False,
         max_rules_per_pair=6,
         max_examples=8,
     ):
@@ -392,6 +417,7 @@ class PairVisualRuleMemory:
         self.min_observations = int(min_observations)
         self.min_concept_gap = float(min_concept_gap)
         self.min_match_gap = float(min_match_gap)
+        self.allow_rank_flip = bool(allow_rank_flip)
         self.max_rules_per_pair = int(max_rules_per_pair)
         self.max_examples = int(max_examples)
         self.pairs = {}
@@ -542,6 +568,12 @@ class PairVisualRuleMemory:
                     'delta': round(float(delta), 6),
                 }
 
+        if not self.allow_rank_flip:
+            top_delta = delta_by_label.get(top_label, 0.0)
+            second_delta = delta_by_label.get(second_label, 0.0)
+            if second_delta - top_delta >= margin:
+                delta_by_label[second_label] = max(0.0, margin + top_delta - 1e-9)
+
         for item in adjusted[:2]:
             label = item.get('label')
             delta = max(-self.max_adjustment, min(self.max_adjustment, delta_by_label.get(label, 0.0)))
@@ -606,6 +638,7 @@ class PairVisualRuleMemory:
                 'min_observations': self.min_observations,
                 'min_concept_gap': self.min_concept_gap,
                 'min_match_gap': self.min_match_gap,
+                'allow_rank_flip': self.allow_rank_flip,
                 'max_rules_per_pair': self.max_rules_per_pair,
             },
             'stats': dict(self.stats),

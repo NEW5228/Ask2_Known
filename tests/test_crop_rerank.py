@@ -77,3 +77,34 @@ def test_crop_rerank_uses_local_crop_evidence_for_low_margin_pair(monkeypatch):
     assert rows[0]['label'] == 'apple'
     assert rows[0]['crop_rerank_gate_reason'] == 'crop_local_evidence'
     assert rows[0]['crop_rerank_score_weight_used'] == 0.50
+
+
+def test_late_fusion_reranks_top_candidates_from_configured_sources():
+    model = PrototypeModel(
+        feature_names=['image_embedding'],
+        similarity_config={
+            'late_fusion': {
+                'enable': True,
+                'max_candidate_classes': 3,
+                'weights': {
+                    'base_score': 1.0,
+                    'knn_score': 1.0,
+                },
+            },
+        },
+    )
+    rows = [
+        {'label': 'banana', 'score': 0.91, 'base_score': 0.91, 'knn_score': 0.80},
+        {'label': 'apple', 'score': 0.90, 'base_score': 0.90, 'knn_score': 0.95},
+        {'label': 'pear', 'score': 0.70, 'base_score': 0.70, 'knn_score': 0.72},
+        {'label': 'orange', 'score': 0.69, 'base_score': 0.69, 'knn_score': 0.99},
+    ]
+
+    model._apply_late_fusion_rerank(rows)
+    rows.sort(key=lambda row: row['score'], reverse=True)
+
+    assert rows[0]['label'] == 'apple'
+    assert rows[0]['late_fusion_gate_reason'] == 'applied'
+    assert rows[-1]['label'] == 'orange'
+    assert rows[-1]['late_fusion_score'] is None
+    assert rows[-1]['score'] == 0.69

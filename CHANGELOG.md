@@ -1,3 +1,14 @@
+# a2k_v0.4.61.0 更新日志
+
+## v0.4.61.0 调整
+
+- 新增 similarity.late_fusion：对 top-k 候选做通用后融合重排，综合 base、kNN、text semantic 和 crop rerank 等证据，减少真类已在 top-3 但排序错误的混淆问题。
+- evaluate_unlabeled.py 的在线学习新增 --online-model-update，默认在用户纠错后把错误样本增量加入模型，让 prototype、kNN、crop evidence 和 pairwise 相似度真正更新。
+- 在线经验默认只使用正向支持证据，不再默认用历史误导源做负向扣分；top-1 翻转需要至少两个证据源支持，可通过 --online-allow-negative-adjustments 和 --online-min-sources-for-flip 调整。
+- PairVisualRuleMemory 默认不直接翻转 top-1，只作为保守证据参与；需要实验时可显式使用 --visual-rule-allow-rank-flip。
+- 37 类宠物评估集 a2k_0442_all37_train30_eval20 上，late_fusion 离线评估达到 672/740 = 90.81%，开启在线增量学习后达到 673/740 = 90.95%。
+- 项目版本升级为 0.4.61.0。
+
 # a2k_v0.4.6.2b 更新日志
 
 ## v0.4.6.2b 调整

@@ -23,7 +23,7 @@ from ask2know.features.feature_config import (
     summarize_group_weights,
 )
 
-VERSION = '0.4.6.2b'
+VERSION = '0.4.61.0'
 
 
 def open_image_file(image_path):

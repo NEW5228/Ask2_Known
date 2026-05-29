@@ -246,6 +246,15 @@ class PrototypeModel:
         self.crop_rerank_trigger_mode = str(
             self.crop_rerank_config.get('trigger_mode', 'margin_and_pair_similarity')
         ).strip().lower()
+        self.late_fusion_config = dict(self.similarity_config.get('late_fusion', {}))
+        self.late_fusion_enabled = bool(self.late_fusion_config.get('enable', False))
+        self.late_fusion_candidate_count = max(2, int(self.late_fusion_config.get('max_candidate_classes', 3)))
+        self.late_fusion_weights = {
+            str(name): max(0.0, float(weight))
+            for name, weight in dict(self.late_fusion_config.get('weights') or {}).items()
+        }
+        if not self.late_fusion_weights:
+            self.late_fusion_weights = {'score': 1.0}
         self.robust_config = dict(self.similarity_config.get('robust_prototype', {}))
         self.robust_enabled = bool(self.robust_config.get('enable', True))
         self.robust_deep_only = bool(self.robust_config.get('deep_only', True))
@@ -771,6 +780,54 @@ class PrototypeModel:
                 + self.crop_rerank_score_weight * float(row['crop_rerank_score'])
             )
 
+    def _apply_late_fusion_rerank(self, rows):
+        for row in rows:
+            row['late_fusion_score'] = None
+            row['late_fusion_gate_reason'] = 'disabled'
+            row['late_fusion_evidence'] = {}
+        if not self.late_fusion_enabled or len(rows) < 2:
+            return
+
+        ranked = sorted(rows, key=lambda item: float(item['score']), reverse=True)
+        candidates = ranked[:min(len(ranked), self.late_fusion_candidate_count)]
+        if len(candidates) < 2:
+            return
+
+        for row in candidates:
+            weighted_sum = 0.0
+            total_weight = 0.0
+            evidence = {}
+            for key, weight in self.late_fusion_weights.items():
+                if weight <= 0.0:
+                    continue
+                value = row.get(key)
+                if value is None:
+                    continue
+                try:
+                    numeric = float(value)
+                except (TypeError, ValueError):
+                    continue
+                weighted_sum += weight * numeric
+                total_weight += weight
+                evidence[key] = {
+                    'weight': float(weight),
+                    'score': float(numeric),
+                }
+            if total_weight <= 0.0:
+                row['late_fusion_gate_reason'] = 'missing_weighted_sources'
+                continue
+            row['late_fusion_score'] = weighted_sum / total_weight
+            row['late_fusion_gate_reason'] = 'applied'
+            row['late_fusion_evidence'] = evidence
+
+        scored = [row for row in candidates if row.get('late_fusion_score') is not None]
+        if len(scored) < 2:
+            return
+        original_slots = sorted([float(row['score']) for row in candidates], reverse=True)
+        fusion_ranked = sorted(scored, key=lambda item: float(item['late_fusion_score']), reverse=True)
+        for idx, row in enumerate(fusion_ranked):
+            row['score'] = original_slots[min(idx, len(original_slots) - 1)]
+
     def _label_prompt_text(self, label):
         return str(label).replace('_', ' ').replace('-', ' ').strip()
 
@@ -1004,6 +1061,7 @@ class PrototypeModel:
                 row['concept_top_gap'] = None
         self._apply_pairwise_rerank(rows, feats, weights)
         self._apply_crop_rerank(rows, image_path)
+        self._apply_late_fusion_rerank(rows)
         results = rows
         results.sort(key=lambda x: x['score'], reverse=True)
         return results
@@ -1068,6 +1126,11 @@ class PrototypeModel:
                     'min_local_gap': self.crop_rerank_min_local_gap,
                     'use_full_crop': self.crop_rerank_use_full_crop,
                     'trigger_mode': self.crop_rerank_trigger_mode,
+                },
+                'late_fusion': {
+                    'enable': self.late_fusion_enabled,
+                    'max_candidate_classes': self.late_fusion_candidate_count,
+                    'weights': self.late_fusion_weights,
                 },
                 'robust_prototype': {
                     'enable': self.robust_enabled,
