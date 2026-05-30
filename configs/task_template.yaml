@@ -99,6 +99,18 @@ similarity:
       knn_score: 0.8
       text_semantic_score: 0.8
       crop_rerank_score: 0.4
+  hierarchy:
+    enable: false
+    parser: auto
+    max_candidate_classes: 12
+    min_group_size: 1
+    score_weight: 0.08
+    max_score_margin: 0.060
+    min_gap: 0.0
+    level_weights:
+      level_1: 0.40
+      level_2: 0.35
+      level_3: 0.25
   robust_prototype:
     enable: true
     deep_only: true

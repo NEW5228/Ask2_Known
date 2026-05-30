@@ -1,11 +1,4 @@
-import argparse
-import json
-import sys
 from pathlib import Path
-
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 from ask2know.features.feature_config import (
     DEFAULT_GROUP_WEIGHTS,
@@ -14,8 +7,9 @@ from ask2know.features.feature_config import (
     infer_feature_preset,
     resolve_feature_preset,
 )
+from ask2know.utils.io_utils import save_json
 
-VERSION = '0.4.62.0'
+VERSION = '0.4.61.1'
 
 
 def prompt_templates_for_preset(feature_preset):
@@ -67,13 +61,7 @@ def hierarchy_yaml_for_preset(feature_preset):
       year: 0.20'''
 
 
-def write_json(path, data):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
-
-def write_yaml_like(path, task_name, dataset_dir, output_dir, project_root, classes, feature_preset, enabled_features):
+def _write_task_config(path, task_name, dataset_dir, output_dir, project_root, classes, feature_preset, enabled_features):
     class_lines = '\n'.join([f'  - {c}' for c in classes])
     group_lines = '\n'.join([f'    {name}: {str(name in enabled_features).lower()}' for name in USER_FEATURE_GROUPS])
     weight_groups = list(enabled_features)
@@ -248,24 +236,25 @@ teaching:
     path.write_text(text, encoding='utf-8')
 
 
-def main():
-    parser = argparse.ArgumentParser(description='Create a new Ask2Know task folder.')
-    parser.add_argument('--name', required=True, help='任务名，例如 fruit_task 或 vehicle_brand_demo')
-    parser.add_argument('--classes', nargs='+', required=True, help='类别名，例如 apple banana pear 或 bmw audi benz')
-    parser.add_argument('--output', default='.', help='任务输出根目录，例如 D:\\a2k_test。默认当前目录')
-    parser.add_argument('--feature-preset', choices=['auto', 'general', 'fruit', 'pet', 'car', 'traffic_sign'], default='auto', help='特征预设。auto 会根据类别名判断是否使用 fruit、pet、car 或 traffic_sign。')
-    parser.add_argument('--features', nargs='+', choices=list(USER_FEATURE_GROUPS), default=None, help='用户可选特征大类。quality 是系统质量检查，不在这里选择。')
-    args = parser.parse_args()
+def create_task_project(name, classes, output='.', feature_preset='auto', features=None):
+    task_name = str(name).strip()
+    if not task_name:
+        raise ValueError('项目名不能为空。')
+    clean_classes = [str(item).strip() for item in classes or [] if str(item).strip()]
+    if not clean_classes:
+        raise ValueError('至少需要一个类别。')
 
-    task_name = args.name
-    feature_preset = resolve_feature_preset(args.feature_preset, args.classes)
-    if args.feature_preset == 'auto':
-        feature_preset = infer_feature_preset(args.classes)
-    if args.features is None:
-        enabled_features = list(PRESET_DEFAULT_GROUPS.get(feature_preset, PRESET_DEFAULT_GROUPS['general']))
+    resolved_preset = resolve_feature_preset(feature_preset, clean_classes)
+    if feature_preset == 'auto':
+        resolved_preset = infer_feature_preset(clean_classes)
+    if features is None:
+        enabled_features = list(PRESET_DEFAULT_GROUPS.get(resolved_preset, PRESET_DEFAULT_GROUPS['general']))
     else:
-        enabled_features = list(dict.fromkeys(args.features))
-    project_root = Path(args.output).expanduser().resolve() / task_name
+        enabled_features = [name for name in dict.fromkeys(features) if name in USER_FEATURE_GROUPS]
+        if not enabled_features:
+            raise ValueError('至少需要选择一个用户可见特征。')
+
+    project_root = Path(output).expanduser().resolve() / task_name
     dataset_dir = project_root / 'datasets'
     output_dir = project_root / 'outputs'
     config_path = project_root / 'configs' / 'task_config.yaml'
@@ -283,64 +272,75 @@ def main():
         project_root / 'sample_pools' / 'unknown',
         project_root / 'metadata',
     ]
-    for d in dirs:
-        d.mkdir(parents=True, exist_ok=True)
+    for directory in dirs:
+        directory.mkdir(parents=True, exist_ok=True)
 
-    for cls in args.classes:
+    for cls in clean_classes:
         (dataset_dir / 'train' / cls).mkdir(parents=True, exist_ok=True)
 
-    objects = []
-    for idx, cls in enumerate(args.classes, 1):
-        objects.append({
+    objects = [
+        {
             'object_id': f'C{idx:03d}',
             'name': cls,
             'display_name': cls,
-            'description': ''
-        })
-
-    write_json(dataset_dir / 'objects.json', {'objects': objects})
-    write_json(dataset_dir / 'concepts.json', {'concepts': []})
-    write_json(project_root / 'metadata' / 'project_meta.json', {
+            'description': '',
+        }
+        for idx, cls in enumerate(clean_classes, 1)
+    ]
+    save_json(dataset_dir / 'objects.json', {'objects': objects})
+    save_json(dataset_dir / 'concepts.json', {'concepts': []})
+    save_json(project_root / 'metadata' / 'project_meta.json', {
         'project_name': task_name,
         'created_by': f'a2k_v{VERSION}',
         'schema_version': VERSION,
-        'classes': args.classes
+        'classes': clean_classes,
     })
-    write_json(project_root / 'metadata' / 'dataset_index.json', {
+    save_json(project_root / 'metadata' / 'dataset_index.json', {
         'schema_version': VERSION,
-        'classes': {cls: {'next_id': 1, 'count': 0} for cls in args.classes}
+        'classes': {cls: {'next_id': 1, 'count': 0} for cls in clean_classes},
     })
-    write_yaml_like(
+    _write_task_config(
         config_path,
         task_name,
         str(dataset_dir).replace('\\', '/'),
         str(output_dir).replace('\\', '/'),
         str(project_root).replace('\\', '/'),
-        args.classes,
-        feature_preset,
+        clean_classes,
+        resolved_preset,
         enabled_features,
     )
-
     readme = project_root / 'README_task.md'
-    readme.write_text(f'''# {task_name}\n\n这个任务由 Ask2Know v{VERSION} 自动创建。\n\n## 放图片\n\n已确认训练样本放入：\n\n```text\n{dataset_dir / 'train'}\n```\n\n待学习未知样本放入：\n\n```text\n{dataset_dir / 'unknown'}\n```\n\n验证准确率样本按真实类别放入：\n\n```text\n{dataset_dir / 'unlabeled' / 'class_name'}\n```\n\n## 运行\n\n在 Ask2Know 框架目录执行：\n\n```bat\npython run_demo.py --config {config_path}\n```\n\nv{VERSION} 默认不弹图，避免 Windows 图片查看器占用文件。需要预览时：\n\n```bat\npython run_demo.py --config {config_path} --preview\n```\n''', encoding='utf-8')
+    readme.write_text(f'''# {task_name}
 
-    print('Ask2Know task created.')
-    print('Project:', project_root)
-    print('Dataset:', dataset_dir)
-    print('Config :', config_path)
-    print('Feature preset:', feature_preset)
-    print('User features:', ', '.join(enabled_features))
-    print('\nNext steps:')
-    print('1. Put known samples into:')
-    for cls in args.classes:
-        print(f'   {dataset_dir / "train" / cls}')
-    print('2. Put learning/unknown samples into:')
-    print(f'   {dataset_dir / "unknown"}')
-    print('3. Put evaluation samples into labeled folders when needed:')
-    print(f'   {dataset_dir / "unlabeled" / "class_name"}')
-    print('4. Run from the a2k framework folder:')
-    print(f'   python run_demo.py --config {config_path}')
+这个任务由 Ask2Know v{VERSION} 自动创建。
 
+## 放图片
 
-if __name__ == '__main__':
-    main()
+已确认训练样本放入：
+
+```text
+{dataset_dir / 'train'}
+```
+
+待学习未知样本放入：
+
+```text
+{dataset_dir / 'unknown'}
+```
+
+验证准确率样本按真实类别放入：
+
+```text
+{dataset_dir / 'unlabeled' / 'class_name'}
+```
+''', encoding='utf-8')
+
+    return {
+        'project_root': str(project_root),
+        'dataset_dir': str(dataset_dir),
+        'output_dir': str(output_dir),
+        'config_path': str(config_path),
+        'feature_preset': resolved_preset,
+        'features': enabled_features,
+        'classes': clean_classes,
+    }

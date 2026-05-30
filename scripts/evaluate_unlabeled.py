@@ -20,7 +20,7 @@ from ask2know.inference.prototype_model import PrototypeModel
 from ask2know.learning.weights import AdaptiveWeights
 from ask2know.utils.io_utils import ensure_dir, load_yaml, save_json
 
-VERSION = '0.4.61.1'
+VERSION = '0.4.62.0'
 
 
 def class_names(objects):
@@ -40,6 +40,10 @@ def rounded_prediction(item):
         'subprototype_top_gap': None if item.get('subprototype_top_gap') is None else round(float(item['subprototype_top_gap']), 6),
         'knn_score': None if item.get('knn_score') is None else round(float(item['knn_score']), 6),
         'text_semantic_score': None if item.get('text_semantic_score') is None else round(float(item['text_semantic_score']), 6),
+        'hierarchy_score': None if item.get('hierarchy_score') is None else round(float(item['hierarchy_score']), 6),
+        'hierarchy_score_weight_used': round(float(item.get('hierarchy_score_weight_used', 0.0)), 6),
+        'hierarchy_gate_reason': item.get('hierarchy_gate_reason'),
+        'hierarchy_evidence': item.get('hierarchy_evidence', []),
         'pairwise_score': None if item.get('pairwise_score') is None else round(float(item['pairwise_score']), 6),
         'pairwise_score_weight_used': round(float(item.get('pairwise_score_weight_used', 0.0)), 6),
         'pairwise_gate_reason': item.get('pairwise_gate_reason'),
@@ -72,6 +76,11 @@ def main():
     )
     parser.add_argument('--config', required=True, help='Project task_config.yaml')
     parser.add_argument('--top-k', type=int, default=3, help='Number of predictions to keep per sample.')
+    parser.add_argument('--output-dir', help='Override paths.output_dir without editing the task config.')
+    parser.add_argument('--deep-cache-dir', help='Override CLIP feature cache directory for evaluation.')
+    parser.add_argument('--enable-hierarchy', action='store_true', help='Enable hierarchical reranking for this evaluation run.')
+    parser.add_argument('--hierarchy-parser', default=None, help='Hierarchy parser override, for example car or auto.')
+    parser.add_argument('--car-local-crops', action='store_true', help='Use extra car part crops for this evaluation run.')
     parser.add_argument('--shuffle', action='store_true', help='Shuffle evaluation samples before streaming evaluation.')
     parser.add_argument('--seed', type=int, default=42, help='Random seed used with --shuffle.')
     parser.add_argument('--online-experience', action='store_true', help='Learn from earlier revealed mistakes and rerank later low-margin confusion pairs.')
@@ -93,6 +102,42 @@ def main():
     args = parser.parse_args()
 
     cfg = load_yaml(args.config)
+    if args.output_dir:
+        cfg.setdefault('paths', {})['output_dir'] = args.output_dir
+    if args.enable_hierarchy:
+        hierarchy_cfg = cfg.setdefault('similarity', {}).setdefault('hierarchy', {})
+        hierarchy_cfg.setdefault('enable', True)
+        hierarchy_cfg['enable'] = True
+        if args.hierarchy_parser:
+            hierarchy_cfg['parser'] = args.hierarchy_parser
+        hierarchy_cfg.setdefault('max_candidate_classes', 6)
+        hierarchy_cfg.setdefault('score_weight', 0.03)
+        hierarchy_cfg.setdefault('max_score_margin', 0.012)
+        hierarchy_cfg.setdefault('min_group_size', 1)
+        hierarchy_cfg.setdefault('min_gap', 0.003)
+        hierarchy_cfg.setdefault('level_weights', {
+            'brand': 0.35,
+            'model': 0.45,
+            'year': 0.20,
+            'level_1': 0.40,
+            'level_2': 0.35,
+            'level_3': 0.25,
+        })
+    if args.car_local_crops:
+        multi_crop = cfg.setdefault('deep_features', {}).setdefault('multi_crop', {})
+        multi_crop['enable'] = True
+        multi_crop['crops'] = [
+            'full',
+            'center',
+            'five_crop',
+            'object',
+            'head',
+            'car_front',
+            'grille',
+            'tail_lights',
+            'side',
+            'wheels',
+        ]
     dataset_dir = cfg['paths']['dataset_dir']
     output_dir = Path(cfg['paths']['output_dir'])
     ensure_dir(output_dir)
@@ -138,7 +183,7 @@ def main():
         feature_groups=feature_spec['group_features'],
         similarity_config=cfg.get('similarity', {}),
         deep_feature_config=deep_feature_config,
-        deep_cache_dir=output_dir / '.cache' / 'deep_features',
+        deep_cache_dir=Path(args.deep_cache_dir) if args.deep_cache_dir else output_dir / '.cache' / 'deep_features',
     ).fit(train_samples)
 
     online_memory = None

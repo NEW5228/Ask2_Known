@@ -23,7 +23,7 @@ from ask2know.features.feature_config import (
     summarize_group_weights,
 )
 
-VERSION = '0.4.61.1'
+VERSION = '0.4.62.0'
 
 
 def open_image_file(image_path):
@@ -54,6 +54,8 @@ def display_results(results, max_items=5):
             sources.append(f'knn:{r["knn_score"]:.3f}')
         if r.get('text_semantic_score') is not None:
             sources.append(f'text:{r["text_semantic_score"]:.3f}')
+        if r.get('hierarchy_score') is not None:
+            sources.append(f'hier:{r["hierarchy_score"]:.3f}')
         if r.get('pairwise_score') is not None:
             sources.append(f'pairwise:{r["pairwise_score"]:.3f}')
         if r.get('crop_rerank_score') is not None:

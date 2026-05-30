@@ -3,6 +3,7 @@ import numpy as np
 from ask2know.features.basic_features import extract_features, extract_features_from_image
 from ask2know.features.deep_adapter import DeepFeatureAdapter, DEFAULT_DEEP_FEATURE_NAME
 from ask2know.concepts.basic_concepts import concepts_from_features, concept_similarity
+from ask2know.inference.hierarchy import label_hierarchy
 
 CONCEPTS_BY_GROUP = {
     'color': {
@@ -255,6 +256,17 @@ class PrototypeModel:
         }
         if not self.late_fusion_weights:
             self.late_fusion_weights = {'score': 1.0}
+        self.hierarchy_config = dict(self.similarity_config.get('hierarchy', {}))
+        self.hierarchy_enabled = bool(self.hierarchy_config.get('enable', False))
+        self.hierarchy_score_weight = max(0.0, min(0.5, float(self.hierarchy_config.get('score_weight', 0.06))))
+        self.hierarchy_candidate_count = max(2, int(self.hierarchy_config.get('max_candidate_classes', 12)))
+        self.hierarchy_min_group_size = max(1, int(self.hierarchy_config.get('min_group_size', 2)))
+        self.hierarchy_max_score_margin = max(0.0, float(self.hierarchy_config.get('max_score_margin', 0.055)))
+        self.hierarchy_min_gap = max(0.0, float(self.hierarchy_config.get('min_gap', 0.0)))
+        self.hierarchy_level_weights = {
+            str(name): max(0.0, float(weight))
+            for name, weight in dict(self.hierarchy_config.get('level_weights') or {}).items()
+        }
         self.robust_config = dict(self.similarity_config.get('robust_prototype', {}))
         self.robust_enabled = bool(self.robust_config.get('enable', True))
         self.robust_deep_only = bool(self.robust_config.get('deep_only', True))
@@ -269,6 +281,9 @@ class PrototypeModel:
         self.text_prototypes = {}
         self.pairwise_similarities = {}
         self.concept_prototypes = {}
+        self.label_hierarchies = {}
+        self.hierarchy_group_labels = {}
+        self.hierarchy_prototypes = {}
         self.samples = {}
         self.sample_features = {}
         self.feature_counts = {}
@@ -358,6 +373,9 @@ class PrototypeModel:
         self.text_prototypes = {}
         self.pairwise_similarities = {}
         self.concept_prototypes = {}
+        self.label_hierarchies = {}
+        self.hierarchy_group_labels = {}
+        self.hierarchy_prototypes = {}
         for label, fdict in grouped.items():
             self.prototypes[label] = {}
             self.feature_counts[label] = {}
@@ -387,6 +405,7 @@ class PrototypeModel:
         self._build_sub_prototypes(self.prototypes.keys())
         self._build_text_prototypes(self.prototypes.keys())
         self._build_pairwise_similarities()
+        self._build_hierarchy_index()
         self._build_training_quality_report()
         return self
 
@@ -445,6 +464,7 @@ class PrototypeModel:
         self._build_text_prototypes([label])
         self._refresh_label_robust_deep_prototype(label)
         self._build_pairwise_similarities()
+        self._build_hierarchy_index()
         self._build_training_quality_report()
 
     def _feature_similarity(self, name, a, b):
@@ -621,6 +641,118 @@ class PrototypeModel:
                     key=lambda row: row['margin'] if row['margin'] is not None else 0.0,
                 )[:self.robust_top_outliers],
             }
+
+    def _build_hierarchy_index(self):
+        self.label_hierarchies = {}
+        self.hierarchy_group_labels = {}
+        self.hierarchy_prototypes = {}
+        if not self.hierarchy_enabled:
+            return
+
+        for label in sorted(self.prototypes.keys()):
+            path = label_hierarchy(label, self.hierarchy_config)
+            self.label_hierarchies[label] = path
+            for item in path:
+                group_key = self._hierarchy_group_key(item)
+                self.hierarchy_group_labels.setdefault(group_key, []).append(label)
+
+        for group_key, labels in self.hierarchy_group_labels.items():
+            if len(labels) < self.hierarchy_min_group_size:
+                continue
+            grouped = {}
+            for label in labels:
+                proto = self.prototypes.get(label, {})
+                for name, value in proto.items():
+                    if value is not None:
+                        grouped.setdefault(name, []).append(value)
+            self.hierarchy_prototypes[group_key] = {
+                name: _mean_vectors(values)
+                for name, values in grouped.items()
+                if values
+            }
+
+    def _hierarchy_group_key(self, item):
+        return (str(item.get('level')), str(item.get('key')))
+
+    def _hierarchy_level_weight(self, level):
+        if self.hierarchy_level_weights:
+            return self.hierarchy_level_weights.get(str(level), 0.0)
+        return 1.0
+
+    def _hierarchy_score(self, label, feats, weights):
+        evidence = []
+        weighted_sum = 0.0
+        total_weight = 0.0
+        for item in self.label_hierarchies.get(label, []):
+            group_key = self._hierarchy_group_key(item)
+            proto = self.hierarchy_prototypes.get(group_key)
+            if not proto:
+                continue
+            score, detail = self._weighted_feature_score(feats, proto, weights)
+            if not detail:
+                continue
+            level_weight = self._hierarchy_level_weight(item.get('level'))
+            if level_weight <= 0.0:
+                continue
+            weighted_sum += level_weight * score
+            total_weight += level_weight
+            evidence.append({
+                'level': item.get('level'),
+                'key': item.get('key'),
+                'display': item.get('display'),
+                'score': float(score),
+                'weight': float(level_weight),
+                'member_count': len(self.hierarchy_group_labels.get(group_key, [])),
+            })
+        if total_weight <= 0.0:
+            return None, evidence
+        return float(weighted_sum / total_weight), evidence
+
+    def _apply_hierarchy_rerank(self, rows, feats, weights):
+        for row in rows:
+            row['hierarchy_score'] = None
+            row['hierarchy_score_weight_used'] = 0.0
+            row['hierarchy_gate_reason'] = 'disabled' if not self.hierarchy_enabled else 'not_candidate'
+            row['hierarchy_evidence'] = []
+        if not self.hierarchy_enabled or len(rows) < 2:
+            return
+
+        ranked = sorted(rows, key=lambda item: float(item['score']), reverse=True)
+        score_margin = float(ranked[0]['score']) - float(ranked[1]['score'])
+        candidates = ranked[:min(len(ranked), self.hierarchy_candidate_count)]
+        if score_margin > self.hierarchy_max_score_margin:
+            for row in candidates:
+                row['hierarchy_gate_reason'] = 'score_margin_too_large'
+            return
+
+        scored = []
+        for row in candidates:
+            hierarchy_score, evidence = self._hierarchy_score(row['label'], feats, weights)
+            row['hierarchy_score'] = hierarchy_score
+            row['hierarchy_evidence'] = evidence
+            if hierarchy_score is None:
+                row['hierarchy_gate_reason'] = 'missing_hierarchy_evidence'
+            else:
+                scored.append(row)
+        if len(scored) < 2:
+            for row in scored:
+                row['hierarchy_gate_reason'] = 'insufficient_competition'
+            return
+
+        hierarchy_ranked = sorted(scored, key=lambda item: float(item['hierarchy_score']), reverse=True)
+        hierarchy_gap = float(hierarchy_ranked[0]['hierarchy_score']) - float(hierarchy_ranked[1]['hierarchy_score'])
+        if hierarchy_gap < self.hierarchy_min_gap:
+            for row in scored:
+                row['hierarchy_gate_reason'] = 'weak_hierarchy_gap'
+            return
+
+        for row in scored:
+            row['hierarchy_score_weight_used'] = self.hierarchy_score_weight
+            row['hierarchy_gate_reason'] = 'applied'
+            row['score'] = (
+                (1.0 - self.hierarchy_score_weight) * float(row['score'])
+                + self.hierarchy_score_weight * float(row['hierarchy_score'])
+            )
 
     def _pairwise_local_score(self, label, feats, weights):
         neighbors = []
@@ -1066,12 +1198,129 @@ class PrototypeModel:
         self._apply_pairwise_rerank(rows, feats, weights)
         self._apply_crop_rerank(rows, image_path)
         self._apply_late_fusion_rerank(rows)
+        self._apply_hierarchy_rerank(rows, feats, weights)
         results = rows
         results.sort(key=lambda x: x['score'], reverse=True)
         return results
 
-    def export(self):
+    @staticmethod
+    def _export_feature_dict(features):
         return {
+            name: np.asarray(value, dtype=np.float32).tolist()
+            for name, value in (features or {}).items()
+            if value is not None
+        }
+
+    @staticmethod
+    def _import_feature_dict(features):
+        return {
+            name: np.asarray(value, dtype=np.float32)
+            for name, value in (features or {}).items()
+            if value is not None
+        }
+
+    @staticmethod
+    def _export_crop_embeddings(crop_embeddings):
+        rows = []
+        for item in crop_embeddings or []:
+            rows.append({
+                'crop_id': item.get('crop_id'),
+                'box': list(item.get('box') or []),
+                'vector': None if item.get('vector') is None else np.asarray(item.get('vector'), dtype=np.float32).tolist(),
+            })
+        return rows
+
+    @staticmethod
+    def _import_crop_embeddings(crop_embeddings):
+        rows = []
+        for item in crop_embeddings or []:
+            rows.append({
+                'crop_id': item.get('crop_id'),
+                'box': list(item.get('box') or []),
+                'vector': None if item.get('vector') is None else np.asarray(item.get('vector'), dtype=np.float32),
+            })
+        return rows
+
+    @classmethod
+    def from_export(cls, data, deep_feature_config=None, deep_cache_dir=None):
+        feature_prototypes = data.get('feature_prototypes') or {}
+        system_features = list(data.get('system_features') or [])
+        feature_names = list(data.get('feature_names') or [])
+        if not feature_names:
+            for feats in feature_prototypes.values():
+                for name in feats:
+                    if name not in feature_names and name not in system_features:
+                        feature_names.append(name)
+
+        model = cls(
+            feature_names,
+            augmentation_config=data.get('augmentation_config') or {'enable': False},
+            concept_config=data.get('concept_config') or {'enable': True, 'score_weight': 0.25},
+            system_feature_names=system_features,
+            feature_groups=data.get('feature_groups') or {},
+            similarity_config=data.get('similarity_config') or {},
+            deep_feature_config=deep_feature_config or data.get('deep_feature_config') or data.get('deep_features') or {},
+            deep_cache_dir=deep_cache_dir,
+        )
+        model.prototypes = {
+            label: cls._import_feature_dict(feats)
+            for label, feats in feature_prototypes.items()
+        }
+        model.sub_prototypes = {
+            label: [np.asarray(vec, dtype=np.float32) for vec in vectors]
+            for label, vectors in (data.get('sub_prototypes') or {}).items()
+        }
+        model.text_prototypes = {
+            label: np.asarray(vec, dtype=np.float32)
+            for label, vec in (data.get('text_prototypes') or {}).items()
+        }
+        model.concept_prototypes = {
+            label: {name: float(value) for name, value in concepts.items()}
+            for label, concepts in (data.get('concept_prototypes') or {}).items()
+        }
+        model.feature_counts = {
+            label: {name: int(value) for name, value in counts.items()}
+            for label, counts in (data.get('feature_counts') or {}).items()
+        }
+        model.concept_counts = {
+            label: {name: int(value) for name, value in counts.items()}
+            for label, counts in (data.get('concept_counts') or {}).items()
+        }
+        model.prototype_stats = data.get('prototype_stats') or {}
+        model.training_quality_report = data.get('training_quality_report') or {}
+        model.samples = {
+            label: list(paths)
+            for label, paths in (data.get('sample_index') or {}).items()
+        }
+        model.sample_features = {}
+        for label, rows in (data.get('sample_features') or {}).items():
+            model.sample_features[label] = []
+            for item in rows or []:
+                model.sample_features[label].append({
+                    'path': item.get('path'),
+                    'features': cls._import_feature_dict(item.get('features') or {}),
+                    'crop_embeddings': cls._import_crop_embeddings(item.get('crop_embeddings') or []),
+                })
+        if not model.samples and model.sample_features:
+            model.samples = {
+                label: [item.get('path') for item in rows if item.get('path')]
+                for label, rows in model.sample_features.items()
+            }
+
+        model.pairwise_similarities = {}
+        for key, value in (data.get('pairwise_similarities') or {}).items():
+            parts = str(key).split('|||', 1)
+            if len(parts) == 2:
+                model.pairwise_similarities[tuple(parts)] = float(value)
+        if not model.pairwise_similarities:
+            model._build_pairwise_similarities()
+        model._build_hierarchy_index()
+        return model
+
+    def export(self, include_sample_features=True):
+        return {
+            'schema_version': 'prototype_model_v2',
+            'feature_names': list(self.feature_names),
             'feature_prototypes': {
                 label: {k: v.tolist() for k, v in feats.items()}
                 for label, feats in self.prototypes.items()
@@ -1085,6 +1334,7 @@ class PrototypeModel:
                 for label, vec in self.text_prototypes.items()
             },
             'concept_prototypes': self.concept_prototypes,
+            'augmentation_config': self.augmentation_config,
             'concept_config': {
                 'enable': self.concepts_enabled,
                 'score_weight': self.concept_score_weight,
@@ -1136,6 +1386,18 @@ class PrototypeModel:
                     'max_candidate_classes': self.late_fusion_candidate_count,
                     'weights': self.late_fusion_weights,
                 },
+                'hierarchy': {
+                    'enable': self.hierarchy_enabled,
+                    'parser': self.hierarchy_config.get('parser', 'auto'),
+                    'delimiter': self.hierarchy_config.get('delimiter', '_'),
+                    'max_depth': self.hierarchy_config.get('max_depth', 3),
+                    'score_weight': self.hierarchy_score_weight,
+                    'max_candidate_classes': self.hierarchy_candidate_count,
+                    'min_group_size': self.hierarchy_min_group_size,
+                    'max_score_margin': self.hierarchy_max_score_margin,
+                    'min_gap': self.hierarchy_min_gap,
+                    'level_weights': self.hierarchy_level_weights,
+                },
                 'robust_prototype': {
                     'enable': self.robust_enabled,
                     'deep_only': self.robust_deep_only,
@@ -1151,13 +1413,31 @@ class PrototypeModel:
                 },
             },
             'deep_features': self.deep_adapter.metadata(),
+            'deep_feature_config': dict(self.deep_adapter.config),
             'feature_groups': self.feature_groups,
             'system_features': self.system_feature_names,
+            'feature_counts': self.feature_counts,
+            'concept_counts': self.concept_counts,
             'prototype_stats': self.prototype_stats,
             'training_quality_report': self.training_quality_report,
+            'pairwise_similarities': {
+                '|||'.join(key): float(value)
+                for key, value in self.pairwise_similarities.items()
+            },
             'sample_index': {
                 label: [str(path) for path in paths]
                 for label, paths in self.samples.items()
             },
+            'sample_features': {
+                label: [
+                    {
+                        'path': str(item.get('path')),
+                        'features': self._export_feature_dict(item.get('features') or {}),
+                        'crop_embeddings': self._export_crop_embeddings(item.get('crop_embeddings') or []),
+                    }
+                    for item in rows
+                ]
+                for label, rows in self.sample_features.items()
+            } if include_sample_features else {},
         }
 

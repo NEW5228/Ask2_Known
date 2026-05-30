@@ -95,6 +95,19 @@ def _head_box_from_object_box(obj_box, width, height):
     return _expand_box((hx1, hy1, hx1 + head_w, hy1 + head_h), width, height, pad_ratio=0.08)
 
 
+def _relative_box(box, x1_ratio, y1_ratio, x2_ratio, y2_ratio, width, height, pad_ratio=0.04):
+    x1, y1, x2, y2 = box
+    bw = max(1, x2 - x1)
+    bh = max(1, y2 - y1)
+    rel = (
+        x1 + int(round(bw * float(x1_ratio))),
+        y1 + int(round(bh * float(y1_ratio))),
+        x1 + int(round(bw * float(x2_ratio))),
+        y1 + int(round(bh * float(y2_ratio))),
+    )
+    return _expand_box(rel, width, height, pad_ratio=pad_ratio)
+
+
 def _crop_image_specs(img, crop_names=None, center_ratio=0.86, corner_ratio=0.72):
     if img is None:
         return []
@@ -145,6 +158,26 @@ def _crop_image_specs(img, crop_names=None, center_ratio=0.86, corner_ratio=0.72
             if object_box is None:
                 object_box = _foreground_box(img)
             add('head', _head_box_from_object_box(object_box, w, h))
+        elif name in {'front', 'car_front', 'front_face'}:
+            if object_box is None:
+                object_box = _foreground_box(img)
+            add('car_front', _relative_box(object_box, 0.18, 0.06, 0.82, 0.58, w, h, pad_ratio=0.06))
+        elif name in {'grille', 'front_grille', 'badge', 'logo', 'emblem'}:
+            if object_box is None:
+                object_box = _foreground_box(img)
+            add('car_grille_badge', _relative_box(object_box, 0.28, 0.22, 0.72, 0.56, w, h, pad_ratio=0.08))
+        elif name in {'tail', 'tail_lights', 'taillight', 'rear'}:
+            if object_box is None:
+                object_box = _foreground_box(img)
+            add('car_tail_lights', _relative_box(object_box, 0.12, 0.20, 0.88, 0.72, w, h, pad_ratio=0.06))
+        elif name in {'side', 'car_side', 'side_profile'}:
+            if object_box is None:
+                object_box = _foreground_box(img)
+            add('car_side', _relative_box(object_box, 0.04, 0.14, 0.96, 0.78, w, h, pad_ratio=0.04))
+        elif name in {'wheel', 'wheels', 'wheel_region'}:
+            if object_box is None:
+                object_box = _foreground_box(img)
+            add('car_wheels', _relative_box(object_box, 0.08, 0.58, 0.92, 0.98, w, h, pad_ratio=0.04))
     return specs
 
 

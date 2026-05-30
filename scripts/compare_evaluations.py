@@ -26,6 +26,9 @@ def main():
     crop_paths = set()
     crop_rows = 0
     crop_reasons = Counter()
+    hierarchy_paths = set()
+    hierarchy_rows = 0
+    hierarchy_reasons = Counter()
     for sample in new.get('samples', []):
         old_sample = old_map.get(sample.get('path'))
         if old_sample:
@@ -42,6 +45,12 @@ def main():
             if float(pred.get('crop_rerank_score_weight_used') or 0.0) > 0.0:
                 crop_paths.add(sample.get('path'))
                 crop_rows += 1
+            hierarchy_reason = pred.get('hierarchy_gate_reason')
+            if hierarchy_reason:
+                hierarchy_reasons[hierarchy_reason] += 1
+            if float(pred.get('hierarchy_score_weight_used') or 0.0) > 0.0:
+                hierarchy_paths.add(sample.get('path'))
+                hierarchy_rows += 1
 
     def fmt_accuracy(report):
         return f"{report.get('correct_count')}/{report.get('eval_sample_count')} = {float(report.get('accuracy', 0.0)):.4f}"
@@ -54,6 +63,9 @@ def main():
     print('crop_samples_weighted:', len(crop_paths))
     print('crop_prediction_rows_weighted:', crop_rows)
     print('crop_gate_reasons:', crop_reasons.most_common())
+    print('hierarchy_samples_weighted:', len(hierarchy_paths))
+    print('hierarchy_prediction_rows_weighted:', hierarchy_rows)
+    print('hierarchy_gate_reasons:', hierarchy_reasons.most_common())
     print('fixed_by_class:', Counter(sample.get('true_label') for sample in fixed).most_common())
     print('regressed_by_class:', Counter(sample.get('true_label') for sample in regressed).most_common())
     old_per_class = old.get('per_class', {})

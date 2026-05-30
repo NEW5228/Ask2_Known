@@ -35,5 +35,6 @@ Thumbs.db
 *.bak
 
 data/
+work/
 test/
 tests/
