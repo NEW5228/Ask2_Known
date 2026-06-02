@@ -6,6 +6,7 @@ SCORE_KEYS = (
     'hierarchy_score',
     'pairwise_score',
     'crop_rerank_score',
+    'pair_confusion_score',
     'concept_score',
 )
 
@@ -68,6 +69,7 @@ def diagnose_prediction(results, true_label=None, low_margin_threshold=0.015, we
             ('hierarchy_score', 'hierarchy_led'),
             ('pairwise_score', 'pairwise_led'),
             ('crop_rerank_score', 'crop_rerank_led'),
+            ('pair_confusion_score', 'pair_confusion_led'),
             ('concept_score', 'concept_led'),
         ):
             delta = margins.get(key)
@@ -81,6 +83,7 @@ def diagnose_prediction(results, true_label=None, low_margin_threshold=0.015, we
             ('hierarchy_score', 'hierarchy_conflicts_with_top'),
             ('pairwise_score', 'pairwise_conflicts_with_top'),
             ('crop_rerank_score', 'crop_rerank_conflicts_with_top'),
+            ('pair_confusion_score', 'pair_confusion_conflicts_with_top'),
             ('concept_score', 'concept_conflicts_with_top'),
         ):
             delta = margins.get(key)

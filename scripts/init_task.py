@@ -15,7 +15,7 @@ from ask2know.features.feature_config import (
     resolve_feature_preset,
 )
 
-VERSION = '0.4.62.0'
+VERSION = '0.4.63.0'
 
 
 def prompt_templates_for_preset(feature_preset):

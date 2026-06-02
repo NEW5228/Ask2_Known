@@ -50,6 +50,7 @@ def _result_row(row):
         'hierarchy_score',
         'pairwise_score',
         'crop_rerank_score',
+        'pair_confusion_score',
         'concept_score',
     ):
         if row.get(key) is not None:

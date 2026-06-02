@@ -210,6 +210,10 @@ class PrototypeModel:
         self.text_config = dict(self.similarity_config.get('text_semantic', {}))
         self.text_enabled = bool(self.text_config.get('enable', False))
         self.text_score_weight = max(0.0, min(0.5, float(self.text_config.get('score_weight', 0.08))))
+        self.text_batch_size = max(1, int(self.text_config.get('batch_size', 64)))
+        self.text_tiebreak_enabled = bool(self.text_config.get('tiebreak_enable', True))
+        self.text_tiebreak_max_margin = max(0.0, float(self.text_config.get('tiebreak_max_score_margin', 0.020)))
+        self.text_tiebreak_min_gap = max(0.0, float(self.text_config.get('tiebreak_min_text_gap', 0.008)))
         self.text_prompt_templates = list(self.text_config.get('prompt_templates') or [
             'a photo of a {label}',
             'a close-up photo of a {label}',
@@ -228,6 +232,21 @@ class PrototypeModel:
         self.pairwise_max_margin = max(0.0, float(self.pairwise_config.get('max_score_margin', 0.018)))
         self.pairwise_min_pair_similarity = max(0.0, min(1.0, float(self.pairwise_config.get('min_pair_similarity', 0.90))))
         self.pairwise_min_local_gap = max(0.0, float(self.pairwise_config.get('min_local_gap', 0.008)))
+        self.pair_confusion_config = dict(self.similarity_config.get('pair_confusion_rerank', {}))
+        self.pair_confusion_enabled = bool(self.pair_confusion_config.get('enable', False))
+        self.pair_confusion_max_margin = max(0.0, float(self.pair_confusion_config.get('max_score_margin', 0.018)))
+        self.pair_confusion_min_pair_similarity = max(0.0, min(
+            1.0,
+            float(self.pair_confusion_config.get('min_pair_similarity', 0.96)),
+        ))
+        self.pair_confusion_min_local_gap = max(0.0, float(self.pair_confusion_config.get('min_local_gap', 0.018)))
+        self.pair_confusion_score_weight = max(
+            0.0,
+            min(0.5, float(self.pair_confusion_config.get('score_weight', 0.10))),
+        )
+        self.pair_confusion_allow_rank_flip = bool(self.pair_confusion_config.get('allow_rank_flip', True))
+        self.pair_confusion_support_sources = max(1, int(self.pair_confusion_config.get('min_support_sources_for_flip', 3)))
+        self.pair_confusion_min_training_risk = max(0, int(self.pair_confusion_config.get('min_training_risk_count', 2)))
         self.crop_rerank_config = dict(
             self.similarity_config.get('crop_rerank')
             or self.similarity_config.get('confusion_rerank')
@@ -244,6 +263,7 @@ class PrototypeModel:
         ))
         self.crop_rerank_min_local_gap = max(0.0, float(self.crop_rerank_config.get('min_local_gap', 0.006)))
         self.crop_rerank_use_full_crop = bool(self.crop_rerank_config.get('use_full_crop', False))
+        self.crop_rerank_match_same_crop_id = bool(self.crop_rerank_config.get('match_same_crop_id', True))
         self.crop_rerank_trigger_mode = str(
             self.crop_rerank_config.get('trigger_mode', 'margin_and_pair_similarity')
         ).strip().lower()
@@ -258,11 +278,23 @@ class PrototypeModel:
             self.late_fusion_weights = {'score': 1.0}
         self.hierarchy_config = dict(self.similarity_config.get('hierarchy', {}))
         self.hierarchy_enabled = bool(self.hierarchy_config.get('enable', False))
-        self.hierarchy_score_weight = max(0.0, min(0.5, float(self.hierarchy_config.get('score_weight', 0.06))))
-        self.hierarchy_candidate_count = max(2, int(self.hierarchy_config.get('max_candidate_classes', 12)))
-        self.hierarchy_min_group_size = max(1, int(self.hierarchy_config.get('min_group_size', 2)))
-        self.hierarchy_max_score_margin = max(0.0, float(self.hierarchy_config.get('max_score_margin', 0.055)))
-        self.hierarchy_min_gap = max(0.0, float(self.hierarchy_config.get('min_gap', 0.0)))
+        self.hierarchy_allow_aggressive = bool(self.hierarchy_config.get('allow_aggressive', False))
+        hierarchy_max_weight = 0.12 if self.hierarchy_allow_aggressive else 0.03
+        hierarchy_max_margin = (
+            max(0.0, float(self.hierarchy_config.get('max_score_margin', 0.018)))
+            if self.hierarchy_allow_aggressive
+            else min(0.018, max(0.0, float(self.hierarchy_config.get('max_score_margin', 0.018))))
+        )
+        self.hierarchy_score_weight = max(
+            0.0,
+            min(hierarchy_max_weight, float(self.hierarchy_config.get('score_weight', 0.02))),
+        )
+        self.hierarchy_candidate_count = max(2, int(self.hierarchy_config.get('max_candidate_classes', 4)))
+        self.hierarchy_min_group_size = max(2, int(self.hierarchy_config.get('min_group_size', 2)))
+        self.hierarchy_max_score_margin = hierarchy_max_margin
+        self.hierarchy_min_gap = max(0.006, float(self.hierarchy_config.get('min_gap', 0.006)))
+        self.hierarchy_require_shared_group = bool(self.hierarchy_config.get('require_shared_group', True))
+        self.hierarchy_min_support_sources = max(0, int(self.hierarchy_config.get('min_support_sources', 2)))
         self.hierarchy_level_weights = {
             str(name): max(0.0, float(weight))
             for name, weight in dict(self.hierarchy_config.get('level_weights') or {}).items()
@@ -274,6 +306,33 @@ class PrototypeModel:
         self.robust_trim_fraction = max(0.0, min(0.4, float(self.robust_config.get('trim_fraction', 0.08))))
         self.robust_report_margin = max(0.0, float(self.robust_config.get('report_margin', 0.015)))
         self.robust_top_outliers = max(1, int(self.robust_config.get('top_outliers_per_class', 5)))
+        self.robust_confusion_filter_enabled = bool(self.robust_config.get('confusion_filter', False))
+        self.robust_confusion_filter_margin = float(self.robust_config.get('confusion_filter_margin', 0.0))
+        self.robust_confusion_filter_max_fraction = max(
+            0.0,
+            min(0.5, float(self.robust_config.get('confusion_filter_max_fraction', 0.20))),
+        )
+        self.robust_confusion_filter_min_samples = max(
+            2,
+            int(self.robust_config.get('confusion_filter_min_samples', 20)),
+        )
+        self.local_evidence_filter_enabled = bool(self.robust_config.get('local_evidence_filter', False))
+        self.local_evidence_filter_margin = float(self.robust_config.get('local_evidence_filter_margin', 0.0))
+        self.local_evidence_filter_max_fraction = max(
+            0.0,
+            min(0.5, float(self.robust_config.get('local_evidence_filter_max_fraction', 0.25))),
+        )
+        self.local_evidence_filter_min_samples = max(
+            1,
+            int(self.robust_config.get('local_evidence_filter_min_samples', 8)),
+        )
+        self.fast_config = dict(self.similarity_config.get('fast_search', {}))
+        self.fast_search_enabled = bool(self.fast_config.get('enable', True))
+        self.fast_candidate_count = max(2, int(self.fast_config.get('candidate_classes', 32)))
+        self.fast_deep_only_local_scores = bool(self.fast_config.get('deep_only_local_scores', False))
+        self.fast_skip_augmented_basic_features = bool(
+            self.fast_config.get('skip_augmented_basic_features_when_deep_enabled', True)
+        )
         self.deep_adapter = DeepFeatureAdapter(deep_feature_config, cache_dir=deep_cache_dir)
         self.deep_feature_name = self.deep_adapter.feature_name or DEFAULT_DEEP_FEATURE_NAME
         self.prototypes = {}
@@ -290,6 +349,9 @@ class PrototypeModel:
         self.concept_counts = {}
         self.prototype_stats = {}
         self.training_quality_report = {}
+        self.training_confusion_pairs = {}
+        self.deep_sample_index = {}
+        self.crop_sample_index = {}
 
     def _allowed_concepts(self):
         if not self.feature_groups:
@@ -330,6 +392,12 @@ class PrototypeModel:
 
     def _feature_list_for_sample(self, path):
         feats_list = [self._extract_primary_features(path)]
+        if (
+            self.fast_skip_augmented_basic_features
+            and self.deep_adapter.is_enabled()
+            and not self.deep_adapter.include_augmented
+        ):
+            return feats_list
         for img in _augmented_images(path, self.augmentation_config):
             try:
                 feats = extract_features_from_image(img)
@@ -356,7 +424,7 @@ class PrototypeModel:
                 self.sample_features.setdefault(label, []).append({
                     'path': sample['path'],
                     'features': feats_list[0],
-                    'crop_embeddings': self._extract_crop_embeddings_for_path(sample['path']),
+                    'crop_embeddings': [],
                 })
             for feats in feats_list:
                 all_feature_names = list(self.feature_names) + list(self.system_feature_names)
@@ -402,6 +470,9 @@ class PrototypeModel:
             for name, values in cdict.items():
                 self.concept_prototypes[label][name] = float(np.mean(values))
                 self.concept_counts[label][name] = len(values)
+        self._apply_confusion_filtered_deep_prototypes()
+        self._mark_confusion_risk_samples()
+        self._build_local_evidence_indexes()
         self._build_sub_prototypes(self.prototypes.keys())
         self._build_text_prototypes(self.prototypes.keys())
         self._build_pairwise_similarities()
@@ -416,7 +487,7 @@ class PrototypeModel:
             self.sample_features.setdefault(label, []).append({
                 'path': image_path,
                 'features': feats_list[0],
-                'crop_embeddings': self._extract_crop_embeddings_for_path(image_path),
+                'crop_embeddings': [],
             })
         self.prototypes.setdefault(label, {})
         self.feature_counts.setdefault(label, {})
@@ -460,9 +531,11 @@ class PrototypeModel:
                 total = old_count + new_count
                 self.concept_prototypes[label][name] = (float(old) * old_count + new_mean * new_count) / total
                 self.concept_counts[label][name] = total
-        self._build_sub_prototypes([label])
-        self._build_text_prototypes([label])
         self._refresh_label_robust_deep_prototype(label)
+        self._mark_confusion_risk_samples()
+        self._build_local_evidence_indexes()
+        self._build_sub_prototypes(self.prototypes.keys())
+        self._build_text_prototypes([label])
         self._build_pairwise_similarities()
         self._build_hierarchy_index()
         self._build_training_quality_report()
@@ -522,8 +595,27 @@ class PrototypeModel:
     def _nearest_samples(self, label, feats, weights):
         if not self.knn_enabled:
             return None, []
+        if self.fast_deep_only_local_scores:
+            scores, items = self._deep_index_scores(label, feats)
+        else:
+            scores, items = None, []
+        if scores is not None:
+            neighbors = []
+            for idx, score in self._top_scores(scores, self.knn_k):
+                item = items[idx] if idx < len(items) else {}
+                detail = {self.deep_feature_name: score}
+                neighbors.append({
+                    'path': str(item.get('path')),
+                    'score': float(score),
+                    'detail': detail,
+                    'group_detail': self._group_detail(detail),
+                })
+            if not neighbors:
+                return None, []
+            knn_score = float(np.mean([x['score'] for x in neighbors]))
+            return knn_score, neighbors
         neighbors = []
-        for item in self.sample_features.get(label, []):
+        for item in self._local_evidence_items(label):
             sample_feats = item.get('features') or {}
             score, detail = self._weighted_feature_score(feats, sample_feats, weights)
             if detail:
@@ -564,15 +656,301 @@ class PrototypeModel:
                     continue
                 self.pairwise_similarities[self._pair_key(left, right)] = _cosine_similarity(left_vec, right_vec)
 
+    def _primary_deep_vector(self, feats):
+        vec = (feats or {}).get(self.deep_feature_name)
+        if vec is None:
+            vec = (feats or {}).get(DEFAULT_DEEP_FEATURE_NAME)
+        return vec
+
+    def _label_deep_vector(self, label):
+        proto = self.prototypes.get(label, {})
+        vec = proto.get(self.deep_feature_name)
+        if vec is None:
+            vec = proto.get(DEFAULT_DEEP_FEATURE_NAME)
+        return vec
+
+    def _deep_proto_index(self, labels):
+        index_labels = []
+        vectors = []
+        for label in labels:
+            vec = self._label_deep_vector(label)
+            if vec is None:
+                continue
+            index_labels.append(label)
+            vectors.append(_l2_normalize(vec))
+        if not vectors:
+            return [], np.zeros((0, 0), dtype=np.float32)
+        return index_labels, np.stack(vectors).astype(np.float32)
+
+    def _deep_confusion_rows_for_label(self, label, labels=None, proto_vectors=None, proto_index=None):
+        labels = list(labels or sorted(self.prototypes.keys()))
+        if proto_index is not None:
+            index_labels, proto_matrix = proto_index
+            if label not in index_labels or proto_matrix.size == 0:
+                return []
+            own_index = index_labels.index(label)
+            rows = []
+            for item in self.sample_features.get(label, []):
+                vec = self._primary_deep_vector(item.get('features') or {})
+                if vec is None:
+                    continue
+                sample_vec = _l2_normalize(vec)
+                sims = (proto_matrix @ sample_vec + 1.0) * 0.5
+                own_score = float(sims[own_index])
+                competitor_sims = sims.copy()
+                competitor_sims[own_index] = -1.0
+                competitor_index = int(np.argmax(competitor_sims))
+                competitor_score = float(competitor_sims[competitor_index])
+                rows.append({
+                    'item': item,
+                    'vector': vec,
+                    'path': str(item.get('path')),
+                    'own_score': own_score,
+                    'nearest_competitor': index_labels[competitor_index],
+                    'nearest_competitor_score': competitor_score,
+                    'margin': float(own_score - competitor_score),
+                })
+            return rows
+
+        if proto_vectors is None:
+            proto_vectors = {
+                candidate: self._label_deep_vector(candidate)
+                for candidate in labels
+            }
+            proto_vectors = {
+                candidate: vec for candidate, vec in proto_vectors.items()
+                if vec is not None
+            }
+        own_vec = proto_vectors.get(label)
+        if own_vec is None:
+            return []
+        rows = []
+        for item in self.sample_features.get(label, []):
+            vec = self._primary_deep_vector(item.get('features') or {})
+            if vec is None:
+                continue
+            own_score = _cosine_similarity(vec, own_vec)
+            competitor_label = None
+            competitor_score = None
+            for other, other_vec in proto_vectors.items():
+                if other == label:
+                    continue
+                score = _cosine_similarity(vec, other_vec)
+                if competitor_score is None or score > competitor_score:
+                    competitor_label = other
+                    competitor_score = score
+            if competitor_score is None:
+                continue
+            rows.append({
+                'item': item,
+                'vector': vec,
+                'path': str(item.get('path')),
+                'own_score': float(own_score),
+                'nearest_competitor': competitor_label,
+                'nearest_competitor_score': float(competitor_score),
+                'margin': float(own_score - competitor_score),
+            })
+        return rows
+
+    def _mark_confusion_risk_samples(self):
+        self.training_confusion_pairs = {}
+        for rows in self.sample_features.values():
+            for item in rows:
+                item.pop('confusion_risk', None)
+                item.pop('confusion_risk_reason', None)
+                item.pop('confusion_margin', None)
+                item.pop('nearest_competitor', None)
+        if not (self.local_evidence_filter_enabled and self.local_evidence_filter_max_fraction > 0.0):
+            return
+
+        labels = sorted(self.prototypes.keys())
+        proto_index = self._deep_proto_index(labels)
+        if len(proto_index[0]) < 2:
+            return
+
+        for label in labels:
+            rows = self._deep_confusion_rows_for_label(label, labels=labels, proto_index=proto_index)
+            if not rows:
+                continue
+            sample_count = len(rows)
+            max_mark = int(np.floor(sample_count * self.local_evidence_filter_max_fraction))
+            if max_mark <= 0:
+                continue
+            risky = [
+                row for row in sorted(rows, key=lambda item: item['margin'])
+                if row['margin'] <= self.local_evidence_filter_margin
+            ]
+            mark_count = min(max_mark, len(risky))
+            if mark_count <= 0:
+                continue
+            if sample_count - mark_count < self.local_evidence_filter_min_samples:
+                mark_count = max(0, sample_count - self.local_evidence_filter_min_samples)
+            for row in risky[:mark_count]:
+                item = row['item']
+                item['confusion_risk'] = True
+                item['confusion_risk_reason'] = 'nearest_competitor_margin'
+                item['confusion_margin'] = row['margin']
+                item['nearest_competitor'] = row['nearest_competitor']
+                pair_key = self._pair_key(label, row['nearest_competitor'])
+                self.training_confusion_pairs[pair_key] = self.training_confusion_pairs.get(pair_key, 0) + 1
+
+    def _local_evidence_items(self, label):
+        items = list(self.sample_features.get(label, []))
+        if not self.local_evidence_filter_enabled:
+            return items
+        kept = [item for item in items if not item.get('confusion_risk')]
+        return kept if kept else items
+
+    def _build_local_evidence_indexes(self):
+        self.deep_sample_index = {}
+        self.crop_sample_index = {}
+        for label in self.sample_features.keys():
+            deep_vectors = []
+            deep_items = []
+            crop_groups = {}
+            for item in self._local_evidence_items(label):
+                feats = item.get('features') or {}
+                vec = self._primary_deep_vector(feats)
+                if vec is not None:
+                    deep_vectors.append(_l2_normalize(vec))
+                    deep_items.append(item)
+                for crop_id, crop_vec in self._crop_rows_for_scoring(item.get('crop_embeddings') or []):
+                    crop_groups.setdefault(str(crop_id), {'vectors': [], 'items': []})
+                    crop_groups[str(crop_id)]['vectors'].append(_l2_normalize(crop_vec))
+                    crop_groups[str(crop_id)]['items'].append(item)
+            if deep_vectors:
+                self.deep_sample_index[label] = {
+                    'matrix': np.stack(deep_vectors).astype(np.float32),
+                    'items': deep_items,
+                }
+            indexed_crops = {}
+            for crop_id, group in crop_groups.items():
+                vectors = group.get('vectors') or []
+                if vectors:
+                    indexed_crops[crop_id] = {
+                        'matrix': np.stack(vectors).astype(np.float32),
+                        'items': group.get('items') or [],
+                    }
+            if indexed_crops:
+                self.crop_sample_index[label] = indexed_crops
+
+    def _ensure_crop_index_for_label(self, label):
+        if label in self.crop_sample_index:
+            return
+        if not (self.crop_rerank_enabled and self.deep_adapter.is_enabled()):
+            return
+        crop_groups = {}
+        for item in self._local_evidence_items(label):
+            if not item.get('crop_embeddings'):
+                path = item.get('path')
+                if path:
+                    item['crop_embeddings'] = self._extract_crop_embeddings_for_path(path)
+            for crop_id, crop_vec in self._crop_rows_for_scoring(item.get('crop_embeddings') or []):
+                crop_groups.setdefault(str(crop_id), {'vectors': [], 'items': []})
+                crop_groups[str(crop_id)]['vectors'].append(_l2_normalize(crop_vec))
+                crop_groups[str(crop_id)]['items'].append(item)
+        indexed_crops = {}
+        for crop_id, group in crop_groups.items():
+            vectors = group.get('vectors') or []
+            if vectors:
+                indexed_crops[crop_id] = {
+                    'matrix': np.stack(vectors).astype(np.float32),
+                    'items': group.get('items') or [],
+                }
+        if indexed_crops:
+            self.crop_sample_index[label] = indexed_crops
+
+    def _deep_index_scores(self, label, feats_or_vec):
+        index = self.deep_sample_index.get(label) or {}
+        matrix = index.get('matrix')
+        if matrix is None or matrix.size == 0:
+            return None, []
+        if isinstance(feats_or_vec, dict):
+            vec = self._primary_deep_vector(feats_or_vec)
+        else:
+            vec = feats_or_vec
+        if vec is None:
+            return None, []
+        query = _l2_normalize(vec)
+        if query.size == 0 or matrix.shape[1] != query.size:
+            return None, []
+        scores = (matrix @ query + 1.0) * 0.5
+        return scores.astype(np.float32), list(index.get('items') or [])
+
+    def _top_scores(self, scores, top_k):
+        if scores is None or len(scores) <= 0:
+            return []
+        top_k = max(1, min(int(top_k), len(scores)))
+        if top_k >= len(scores):
+            indexes = np.argsort(scores)[::-1]
+        else:
+            indexes = np.argpartition(scores, -top_k)[-top_k:]
+            indexes = indexes[np.argsort(scores[indexes])[::-1]]
+        return [(int(idx), float(scores[idx])) for idx in indexes]
+
+    def _apply_confusion_filtered_deep_prototypes(self):
+        if not (
+            self.robust_enabled
+            and self.robust_confusion_filter_enabled
+            and self.robust_confusion_filter_max_fraction > 0.0
+        ):
+            return
+        labels = sorted(self.prototypes.keys())
+        proto_index = self._deep_proto_index(labels)
+        if len(proto_index[0]) < 2:
+            return
+
+        for label in labels:
+            rows = self._deep_confusion_rows_for_label(label, labels=labels, proto_index=proto_index)
+            sample_count = len(rows)
+            if sample_count < self.robust_confusion_filter_min_samples:
+                continue
+            max_remove = int(np.floor(sample_count * self.robust_confusion_filter_max_fraction))
+            if max_remove <= 0:
+                continue
+            risky = [
+                row for row in sorted(rows, key=lambda item: item['margin'])
+                if row['margin'] <= self.robust_confusion_filter_margin
+            ]
+            remove_count = min(max_remove, len(risky))
+            if remove_count <= 0 or sample_count - remove_count < self.robust_confusion_filter_min_samples:
+                continue
+            remove_paths = {row['path'] for row in risky[:remove_count]}
+            kept_vectors = [row['vector'] for row in rows if row['path'] not in remove_paths]
+            mean, stats = _robust_mean_vectors(
+                kept_vectors,
+                trim_fraction=self.robust_trim_fraction,
+                min_samples=self.robust_min_samples,
+            )
+            if mean is None:
+                continue
+            self.prototypes.setdefault(label, {})[self.deep_feature_name] = mean
+            self.feature_counts.setdefault(label, {})[self.deep_feature_name] = len(kept_vectors)
+            stats = dict(stats)
+            stats.update({
+                'confusion_filtered_count': int(remove_count),
+                'confusion_filter_margin': float(self.robust_confusion_filter_margin),
+                'confusion_filter_max_fraction': float(self.robust_confusion_filter_max_fraction),
+                'confusion_filter_worst_margin': float(risky[0]['margin']) if risky else None,
+                'confusion_filter_removed': [
+                    {
+                        'path': row['path'],
+                        'own_score': row['own_score'],
+                        'nearest_competitor': row['nearest_competitor'],
+                        'nearest_competitor_score': row['nearest_competitor_score'],
+                        'margin': row['margin'],
+                    }
+                    for row in risky[:min(remove_count, self.robust_top_outliers)]
+                ],
+            })
+            self.prototype_stats.setdefault(label, {})[self.deep_feature_name] = stats
+
     def _refresh_label_robust_deep_prototype(self, label):
         if not self.robust_enabled:
             return
         vectors = []
         for item in self.sample_features.get(label, []):
-            feats = item.get('features') or {}
-            vec = feats.get(self.deep_feature_name)
-            if vec is None:
-                vec = feats.get(DEFAULT_DEEP_FEATURE_NAME)
+            vec = self._primary_deep_vector(item.get('features') or {})
             if vec is not None:
                 vectors.append(vec)
         if not vectors:
@@ -588,44 +966,19 @@ class PrototypeModel:
     def _build_training_quality_report(self):
         self.training_quality_report = {}
         labels = sorted(self.prototypes.keys())
+        proto_index = self._deep_proto_index(labels)
         for label in labels:
+            raw_rows = self._deep_confusion_rows_for_label(label, labels=labels, proto_index=proto_index)
             rows = []
-            own_proto = self.prototypes.get(label, {})
-            own_vec = own_proto.get(self.deep_feature_name)
-            if own_vec is None:
-                own_vec = own_proto.get(DEFAULT_DEEP_FEATURE_NAME)
-            if own_vec is None:
-                continue
-            for item in self.sample_features.get(label, []):
-                feats = item.get('features') or {}
-                vec = feats.get(self.deep_feature_name)
-                if vec is None:
-                    vec = feats.get(DEFAULT_DEEP_FEATURE_NAME)
-                if vec is None:
-                    continue
-                own_score = _cosine_similarity(vec, own_vec)
-                competitor_label = None
-                competitor_score = None
-                for other in labels:
-                    if other == label:
-                        continue
-                    other_proto = self.prototypes.get(other, {})
-                    other_vec = other_proto.get(self.deep_feature_name)
-                    if other_vec is None:
-                        other_vec = other_proto.get(DEFAULT_DEEP_FEATURE_NAME)
-                    if other_vec is None:
-                        continue
-                    score = _cosine_similarity(vec, other_vec)
-                    if competitor_score is None or score > competitor_score:
-                        competitor_label = other
-                        competitor_score = score
-                margin = None if competitor_score is None else own_score - competitor_score
+            for row in raw_rows:
+                item = row.get('item') or {}
                 rows.append({
-                    'path': str(item.get('path')),
-                    'own_score': float(own_score),
-                    'nearest_competitor': competitor_label,
-                    'nearest_competitor_score': None if competitor_score is None else float(competitor_score),
-                    'margin': margin,
+                    'path': row['path'],
+                    'own_score': row['own_score'],
+                    'nearest_competitor': row['nearest_competitor'],
+                    'nearest_competitor_score': row['nearest_competitor_score'],
+                    'margin': row['margin'],
+                    'local_evidence_filtered': bool(item.get('confusion_risk')),
                 })
             rows.sort(key=lambda row: row['own_score'])
             risk_rows = [
@@ -634,6 +987,7 @@ class PrototypeModel:
             ]
             self.training_quality_report[label] = {
                 'sample_count': len(rows),
+                'local_evidence_filtered_count': sum(1 for row in rows if row.get('local_evidence_filtered')),
                 'prototype_stats': self.prototype_stats.get(label, {}).get(self.deep_feature_name, {}),
                 'outliers': rows[:self.robust_top_outliers],
                 'confusion_risk_samples': sorted(
@@ -679,6 +1033,41 @@ class PrototypeModel:
             return self.hierarchy_level_weights.get(str(level), 0.0)
         return 1.0
 
+    def _hierarchy_group_keys_for_label(self, label):
+        return {
+            self._hierarchy_group_key(item)
+            for item in self.label_hierarchies.get(label, [])
+            if self._hierarchy_group_key(item) in self.hierarchy_prototypes
+        }
+
+    def _share_hierarchy_group(self, left_label, right_label):
+        left = self._hierarchy_group_keys_for_label(left_label)
+        right = self._hierarchy_group_keys_for_label(right_label)
+        return bool(left and right and left.intersection(right))
+
+    def _supporting_source_count(self, row, opponent, min_gap=0.001):
+        count = 0
+        for key in (
+            'base_score',
+            'prototype_score',
+            'subprototype_score',
+            'knn_score',
+            'text_semantic_score',
+            'pairwise_score',
+            'crop_rerank_score',
+            'late_fusion_score',
+        ):
+            value = row.get(key)
+            other = opponent.get(key)
+            if value is None or other is None:
+                continue
+            try:
+                if float(value) - float(other) > min_gap:
+                    count += 1
+            except (TypeError, ValueError):
+                continue
+        return count
+
     def _hierarchy_score(self, label, feats, weights):
         evidence = []
         weighted_sum = 0.0
@@ -719,10 +1108,18 @@ class PrototypeModel:
 
         ranked = sorted(rows, key=lambda item: float(item['score']), reverse=True)
         score_margin = float(ranked[0]['score']) - float(ranked[1]['score'])
-        candidates = ranked[:min(len(ranked), self.hierarchy_candidate_count)]
+        candidate_count = self.hierarchy_candidate_count if self.hierarchy_allow_aggressive else 2
+        candidates = ranked[:min(len(ranked), candidate_count)]
         if score_margin > self.hierarchy_max_score_margin:
             for row in candidates:
                 row['hierarchy_gate_reason'] = 'score_margin_too_large'
+            return
+        if (
+            self.hierarchy_require_shared_group
+            and not self._share_hierarchy_group(ranked[0]['label'], ranked[1]['label'])
+        ):
+            for row in candidates:
+                row['hierarchy_gate_reason'] = 'no_shared_hierarchy_group'
             return
 
         scored = []
@@ -746,6 +1143,15 @@ class PrototypeModel:
                 row['hierarchy_gate_reason'] = 'weak_hierarchy_gap'
             return
 
+        hierarchy_winner = hierarchy_ranked[0]
+        score_top = ranked[0]
+        if hierarchy_winner is not score_top:
+            support_count = self._supporting_source_count(hierarchy_winner, score_top)
+            if support_count < self.hierarchy_min_support_sources:
+                for row in scored:
+                    row['hierarchy_gate_reason'] = 'hierarchy_lacks_source_support'
+                return
+
         for row in scored:
             row['hierarchy_score_weight_used'] = self.hierarchy_score_weight
             row['hierarchy_gate_reason'] = 'applied'
@@ -755,8 +1161,14 @@ class PrototypeModel:
             )
 
     def _pairwise_local_score(self, label, feats, weights):
+        scores, _ = self._deep_index_scores(label, feats) if self.fast_deep_only_local_scores else (None, [])
+        if scores is not None:
+            top = [score for _, score in self._top_scores(scores, self.pairwise_local_k)]
+            if not top:
+                return None
+            return float(0.65 * top[0] + 0.35 * np.mean(top))
         neighbors = []
-        for item in self.sample_features.get(label, []):
+        for item in self._local_evidence_items(label):
             sample_feats = item.get('features') or {}
             score, detail = self._weighted_feature_score(feats, sample_feats, weights)
             if detail:
@@ -813,24 +1225,56 @@ class PrototypeModel:
             row['score'] = (1.0 - self.pairwise_score_weight) * float(row['score']) + self.pairwise_score_weight * float(row['pairwise_score'])
 
     def _crop_vectors_for_scoring(self, crop_embeddings):
-        vectors = []
+        return [vec for _, vec in self._crop_rows_for_scoring(crop_embeddings)]
+
+    def _crop_rows_for_scoring(self, crop_embeddings):
+        rows = []
         for item in crop_embeddings or []:
-            if not self.crop_rerank_use_full_crop and item.get('crop_id') == 'full':
+            crop_id = str(item.get('crop_id') or '')
+            if not self.crop_rerank_use_full_crop and crop_id == 'full':
                 continue
             vec = item.get('vector')
             if vec is not None:
-                vectors.append(vec)
-        return vectors
+                rows.append((crop_id, vec))
+        return rows
 
     def _crop_local_score(self, label, query_crops):
-        query_vectors = self._crop_vectors_for_scoring(query_crops)
-        if not query_vectors:
+        query_rows = self._crop_rows_for_scoring(query_crops)
+        if not query_rows:
             return None
+        self._ensure_crop_index_for_label(label)
+        crop_index = self.crop_sample_index.get(label) or {}
+        if crop_index:
+            candidate_scores = []
+            for query_id, query_vec in query_rows:
+                query = _l2_normalize(query_vec)
+                if query.size == 0:
+                    continue
+                groups = []
+                if self.crop_rerank_match_same_crop_id:
+                    group = crop_index.get(str(query_id))
+                    if group:
+                        groups.append(group)
+                else:
+                    groups.extend(crop_index.values())
+                for group in groups:
+                    matrix = group.get('matrix')
+                    if matrix is None or matrix.size == 0 or matrix.shape[1] != query.size:
+                        continue
+                    scores = (matrix @ query + 1.0) * 0.5
+                    candidate_scores.extend(score for _, score in self._top_scores(scores, self.crop_rerank_local_k))
+            if not candidate_scores:
+                return None
+            candidate_scores.sort(reverse=True)
+            top = candidate_scores[:self.crop_rerank_local_k]
+            return float(0.70 * top[0] + 0.30 * np.mean(top))
         candidate_scores = []
-        for item in self.sample_features.get(label, []):
-            sample_vectors = self._crop_vectors_for_scoring(item.get('crop_embeddings') or [])
-            for query_vec in query_vectors:
-                for sample_vec in sample_vectors:
+        for item in self._local_evidence_items(label):
+            sample_rows = self._crop_rows_for_scoring(item.get('crop_embeddings') or [])
+            for query_id, query_vec in query_rows:
+                for sample_id, sample_vec in sample_rows:
+                    if self.crop_rerank_match_same_crop_id and query_id != sample_id:
+                        continue
                     candidate_scores.append(_cosine_similarity(query_vec, sample_vec))
         if not candidate_scores:
             return None
@@ -916,6 +1360,153 @@ class PrototypeModel:
                 + self.crop_rerank_score_weight * float(row['crop_rerank_score'])
             )
 
+    def _deep_local_score(self, label, feats, local_k=5):
+        image_vec = self._primary_deep_vector(feats)
+        if image_vec is None:
+            return None
+        indexed_scores, _ = self._deep_index_scores(label, image_vec)
+        if indexed_scores is not None:
+            top = [score for _, score in self._top_scores(indexed_scores, max(1, int(local_k)))]
+            if not top:
+                return None
+            return float(0.70 * top[0] + 0.30 * np.mean(top))
+        scores = []
+        for item in self._local_evidence_items(label):
+            sample_vec = self._primary_deep_vector(item.get('features') or {})
+            if sample_vec is not None:
+                scores.append(_cosine_similarity(image_vec, sample_vec))
+        if not scores:
+            return None
+        scores.sort(reverse=True)
+        top = scores[:max(1, int(local_k))]
+        return float(0.70 * top[0] + 0.30 * np.mean(top))
+
+    def _pair_confusion_support_count(self, row, opponent, min_gap=0.001):
+        count = 0
+        for key in (
+            'pair_confusion_deep_score',
+            'crop_rerank_score',
+            'pairwise_score',
+            'knn_score',
+            'subprototype_score',
+            'late_fusion_score',
+        ):
+            value = row.get(key)
+            other = opponent.get(key)
+            if value is None or other is None:
+                continue
+            try:
+                if float(value) - float(other) > min_gap:
+                    count += 1
+            except (TypeError, ValueError):
+                continue
+        return count
+
+    def _pair_confusion_score_for_row(self, row):
+        weighted_sum = 0.0
+        total_weight = 0.0
+        evidence = {}
+        for key, weight in (
+            ('pair_confusion_deep_score', 1.0),
+            ('crop_rerank_score', 0.8),
+            ('pairwise_score', 0.6),
+            ('knn_score', 0.4),
+            ('subprototype_score', 0.3),
+            ('late_fusion_score', 0.3),
+        ):
+            value = row.get(key)
+            if value is None:
+                continue
+            weighted_sum += float(weight) * float(value)
+            total_weight += float(weight)
+            evidence[key] = float(value)
+        if total_weight <= 0.0:
+            return None, evidence
+        return float(weighted_sum / total_weight), evidence
+
+    def _apply_pair_confusion_rerank(self, rows, feats):
+        for row in rows:
+            row['pair_confusion_score'] = None
+            row['pair_confusion_deep_score'] = None
+            row['pair_confusion_score_weight_used'] = 0.0
+            row['pair_confusion_gate_reason'] = 'disabled' if not self.pair_confusion_enabled else 'not_candidate'
+            row['pair_confusion_pair_similarity'] = None
+            row['pair_confusion_local_gap'] = None
+            row['pair_confusion_training_risk_count'] = 0
+            row['pair_confusion_evidence'] = {}
+        if not self.pair_confusion_enabled or len(rows) < 2:
+            return
+
+        ranked = sorted(rows, key=lambda item: float(item['score']), reverse=True)
+        top = ranked[0]
+        second = ranked[1]
+        score_margin = float(top['score']) - float(second['score'])
+        pair_key = self._pair_key(top['label'], second['label'])
+        pair_similarity = self.pairwise_similarities.get(pair_key)
+        risk_count = int(self.training_confusion_pairs.get(pair_key, 0))
+        for row in (top, second):
+            row['pair_confusion_pair_similarity'] = pair_similarity
+            row['pair_confusion_training_risk_count'] = risk_count
+        if score_margin > self.pair_confusion_max_margin:
+            for row in (top, second):
+                row['pair_confusion_gate_reason'] = 'score_margin_too_large'
+            return
+        if pair_similarity is not None and pair_similarity < self.pair_confusion_min_pair_similarity:
+            for row in (top, second):
+                row['pair_confusion_gate_reason'] = 'pair_not_similar'
+            return
+        if risk_count < self.pair_confusion_min_training_risk:
+            for row in (top, second):
+                row['pair_confusion_gate_reason'] = 'no_training_confusion_pair'
+            return
+
+        scored = []
+        for row in (top, second):
+            row['pair_confusion_deep_score'] = self._deep_local_score(
+                row['label'],
+                feats,
+                local_k=max(self.knn_k, self.pairwise_local_k),
+            )
+            score, evidence = self._pair_confusion_score_for_row(row)
+            row['pair_confusion_score'] = score
+            row['pair_confusion_evidence'] = evidence
+            if score is not None:
+                scored.append(row)
+        if len(scored) < 2:
+            for row in scored:
+                row['pair_confusion_gate_reason'] = 'missing_local_evidence'
+            return
+
+        pair_ranked = sorted(scored, key=lambda item: float(item['pair_confusion_score']), reverse=True)
+        local_gap = float(pair_ranked[0]['pair_confusion_score']) - float(pair_ranked[1]['pair_confusion_score'])
+        for row in scored:
+            row['pair_confusion_local_gap'] = local_gap
+        if local_gap < self.pair_confusion_min_local_gap:
+            for row in scored:
+                row['pair_confusion_gate_reason'] = 'weak_local_gap'
+            return
+
+        winner = pair_ranked[0]
+        loser = pair_ranked[1]
+        if winner is top:
+            for row in scored:
+                row['pair_confusion_gate_reason'] = 'top_already_supported'
+            return
+
+        support_count = self._pair_confusion_support_count(winner, loser)
+        if not self.pair_confusion_allow_rank_flip or support_count < self.pair_confusion_support_sources:
+            for row in scored:
+                row['pair_confusion_gate_reason'] = 'insufficient_flip_support'
+            return
+
+        for row in scored:
+            row['pair_confusion_score_weight_used'] = self.pair_confusion_score_weight
+            row['pair_confusion_gate_reason'] = 'pair_local_evidence'
+            row['score'] = (
+                (1.0 - self.pair_confusion_score_weight) * float(row['score'])
+                + self.pair_confusion_score_weight * float(row['pair_confusion_score'])
+            )
+
     def _apply_late_fusion_rerank(self, rows):
         for row in rows:
             row['late_fusion_score'] = None
@@ -964,6 +1555,37 @@ class PrototypeModel:
         for idx, row in enumerate(fusion_ranked):
             row['score'] = original_slots[min(idx, len(original_slots) - 1)]
 
+    def _apply_text_tiebreak_rerank(self, rows):
+        for row in rows:
+            row['text_tiebreak_gate_reason'] = 'disabled' if not self.text_tiebreak_enabled else 'not_candidate'
+            row['text_tiebreak_gap'] = None
+        if not (self.text_enabled and self.text_tiebreak_enabled) or len(rows) < 2:
+            return
+        ranked = sorted(rows, key=lambda item: float(item['score']), reverse=True)
+        top = ranked[0]
+        second = ranked[1]
+        score_margin = float(top['score']) - float(second['score'])
+        for row in (top, second):
+            row['text_tiebreak_gate_reason'] = 'score_margin_too_large'
+        if score_margin > self.text_tiebreak_max_margin:
+            return
+        top_text = top.get('text_semantic_score')
+        second_text = second.get('text_semantic_score')
+        if top_text is None or second_text is None:
+            for row in (top, second):
+                row['text_tiebreak_gate_reason'] = 'missing_text_score'
+            return
+        text_gap = float(second_text) - float(top_text)
+        for row in (top, second):
+            row['text_tiebreak_gap'] = text_gap
+        if text_gap <= self.text_tiebreak_min_gap:
+            for row in (top, second):
+                row['text_tiebreak_gate_reason'] = 'weak_text_gap'
+            return
+        second['score'] = float(top['score']) + 1e-6
+        top['text_tiebreak_gate_reason'] = 'yielded_to_text'
+        second['text_tiebreak_gate_reason'] = 'text_tiebreak'
+
     def _label_prompt_text(self, label):
         return str(label).replace('_', ' ').replace('-', ' ').strip()
 
@@ -972,7 +1594,7 @@ class PrototypeModel:
             return
         for label in labels:
             vectors = []
-            for item in self.sample_features.get(label, []):
+            for item in self._local_evidence_items(label):
                 feats = item.get('features') or {}
                 vec = feats.get(self.deep_feature_name)
                 if vec is None:
@@ -1029,10 +1651,18 @@ class PrototypeModel:
     def _build_text_prototypes(self, labels):
         if not self.text_enabled or not self.deep_adapter.is_enabled():
             return
-        for label in labels:
+        prompt_rows = []
+        for label in list(labels):
             readable = self._label_prompt_text(label)
-            prompts = [template.format(label=readable) for template in self.text_prompt_templates]
-            vectors = self.deep_adapter.extract_text_vectors(prompts)
+            for template in self.text_prompt_templates:
+                prompt_rows.append((label, template.format(label=readable)))
+        grouped = {}
+        for start in range(0, len(prompt_rows), self.text_batch_size):
+            batch = prompt_rows[start:start + self.text_batch_size]
+            vectors = self.deep_adapter.extract_text_vectors([text for _, text in batch])
+            for (label, _), vec in zip(batch, vectors):
+                grouped.setdefault(label, []).append(vec)
+        for label, vectors in grouped.items():
             if vectors:
                 self.text_prototypes[label] = _l2_normalize(_mean_vectors(vectors))
 
@@ -1125,10 +1755,6 @@ class PrototypeModel:
                 if name in proto and name in feats:
                     system_detail[name] = self._feature_similarity(name, feats[name], proto[name])
             feature_score = prototype_score
-            knn_score, nearest = self._nearest_samples(label, feats, weights)
-            if knn_score is not None:
-                kw = self.knn_score_weight
-                feature_score = (1.0 - kw) * prototype_score + kw * knn_score
             final = feature_score
             subprototype_score = self._subprototype_score(label, feats)
             if subprototype_score is not None:
@@ -1150,7 +1776,7 @@ class PrototypeModel:
                 'feature_score': feature_score,
                 'prototype_score': prototype_score,
                 'subprototype_score': subprototype_score,
-                'knn_score': knn_score,
+                'knn_score': None,
                 'text_semantic_score': text_score,
                 'concept_score': concept_score,
                 'detail': detail,
@@ -1158,8 +1784,31 @@ class PrototypeModel:
                 'system_detail': system_detail,
                 'concepts': sample_concepts,
                 'class_concepts': concept_proto,
-                'nearest_samples': nearest,
+                'nearest_samples': [],
             })
+        if self.knn_enabled and rows:
+            if self.fast_search_enabled:
+                candidate_count = min(len(rows), self.fast_candidate_count)
+            else:
+                candidate_count = len(rows)
+            candidates = sorted(rows, key=lambda item: float(item['base_score']), reverse=True)[:candidate_count]
+            for row in candidates:
+                knn_score, nearest = self._nearest_samples(row['label'], feats, weights)
+                row['knn_score'] = knn_score
+                row['nearest_samples'] = nearest
+                if knn_score is None:
+                    continue
+                feature_score = (
+                    (1.0 - self.knn_score_weight) * float(row['prototype_score'])
+                    + self.knn_score_weight * float(knn_score)
+                )
+                final = feature_score
+                text_score = row.get('text_semantic_score')
+                if text_score is not None:
+                    final = (1.0 - self.text_score_weight) * final + self.text_score_weight * float(text_score)
+                row['feature_score'] = feature_score
+                row['score'] = final
+                row['base_score'] = final
         base_ranked = sorted(rows, key=lambda item: float(item['base_score']), reverse=True)
         base_top = base_ranked[0] if base_ranked else None
         base_margin = (
@@ -1198,6 +1847,8 @@ class PrototypeModel:
         self._apply_pairwise_rerank(rows, feats, weights)
         self._apply_crop_rerank(rows, image_path)
         self._apply_late_fusion_rerank(rows)
+        self._apply_pair_confusion_rerank(rows, feats)
+        self._apply_text_tiebreak_rerank(rows)
         self._apply_hierarchy_rerank(rows, feats, weights)
         results = rows
         results.sort(key=lambda x: x['score'], reverse=True)
@@ -1288,6 +1939,11 @@ class PrototypeModel:
         }
         model.prototype_stats = data.get('prototype_stats') or {}
         model.training_quality_report = data.get('training_quality_report') or {}
+        model.training_confusion_pairs = {
+            tuple(str(key).split('|||', 1)): int(value)
+            for key, value in (data.get('training_confusion_pairs') or {}).items()
+            if len(str(key).split('|||', 1)) == 2
+        }
         model.samples = {
             label: list(paths)
             for label, paths in (data.get('sample_index') or {}).items()
@@ -1300,6 +1956,10 @@ class PrototypeModel:
                     'path': item.get('path'),
                     'features': cls._import_feature_dict(item.get('features') or {}),
                     'crop_embeddings': cls._import_crop_embeddings(item.get('crop_embeddings') or []),
+                    'confusion_risk': bool(item.get('confusion_risk', False)),
+                    'confusion_risk_reason': item.get('confusion_risk_reason'),
+                    'confusion_margin': item.get('confusion_margin'),
+                    'nearest_competitor': item.get('nearest_competitor'),
                 })
         if not model.samples and model.sample_features:
             model.samples = {
@@ -1314,6 +1974,9 @@ class PrototypeModel:
                 model.pairwise_similarities[tuple(parts)] = float(value)
         if not model.pairwise_similarities:
             model._build_pairwise_similarities()
+        if not model.training_confusion_pairs and model.sample_features:
+            model._mark_confusion_risk_samples()
+        model._build_local_evidence_indexes()
         model._build_hierarchy_index()
         return model
 
@@ -1360,6 +2023,10 @@ class PrototypeModel:
                 'text_semantic': {
                     'enable': self.text_enabled,
                     'score_weight': self.text_score_weight,
+                    'batch_size': self.text_batch_size,
+                    'tiebreak_enable': self.text_tiebreak_enabled,
+                    'tiebreak_max_score_margin': self.text_tiebreak_max_margin,
+                    'tiebreak_min_text_gap': self.text_tiebreak_min_gap,
                     'prompt_templates': self.text_prompt_templates,
                 },
                 'pairwise_rerank': {
@@ -1379,7 +2046,18 @@ class PrototypeModel:
                     'min_pair_similarity': self.crop_rerank_min_pair_similarity,
                     'min_local_gap': self.crop_rerank_min_local_gap,
                     'use_full_crop': self.crop_rerank_use_full_crop,
+                    'match_same_crop_id': self.crop_rerank_match_same_crop_id,
                     'trigger_mode': self.crop_rerank_trigger_mode,
+                },
+                'pair_confusion_rerank': {
+                    'enable': self.pair_confusion_enabled,
+                    'max_score_margin': self.pair_confusion_max_margin,
+                    'min_pair_similarity': self.pair_confusion_min_pair_similarity,
+                    'min_local_gap': self.pair_confusion_min_local_gap,
+                    'score_weight': self.pair_confusion_score_weight,
+                    'allow_rank_flip': self.pair_confusion_allow_rank_flip,
+                    'min_support_sources_for_flip': self.pair_confusion_support_sources,
+                    'min_training_risk_count': self.pair_confusion_min_training_risk,
                 },
                 'late_fusion': {
                     'enable': self.late_fusion_enabled,
@@ -1405,6 +2083,20 @@ class PrototypeModel:
                     'trim_fraction': self.robust_trim_fraction,
                     'report_margin': self.robust_report_margin,
                     'top_outliers_per_class': self.robust_top_outliers,
+                    'confusion_filter': self.robust_confusion_filter_enabled,
+                    'confusion_filter_margin': self.robust_confusion_filter_margin,
+                    'confusion_filter_max_fraction': self.robust_confusion_filter_max_fraction,
+                    'confusion_filter_min_samples': self.robust_confusion_filter_min_samples,
+                    'local_evidence_filter': self.local_evidence_filter_enabled,
+                    'local_evidence_filter_margin': self.local_evidence_filter_margin,
+                    'local_evidence_filter_max_fraction': self.local_evidence_filter_max_fraction,
+                    'local_evidence_filter_min_samples': self.local_evidence_filter_min_samples,
+                },
+                'fast_search': {
+                    'enable': self.fast_search_enabled,
+                    'candidate_classes': self.fast_candidate_count,
+                    'deep_only_local_scores': self.fast_deep_only_local_scores,
+                    'skip_augmented_basic_features_when_deep_enabled': self.fast_skip_augmented_basic_features,
                 },
                 'concept_gate': {
                     'enable': self.concept_gate_enabled,
@@ -1420,6 +2112,10 @@ class PrototypeModel:
             'concept_counts': self.concept_counts,
             'prototype_stats': self.prototype_stats,
             'training_quality_report': self.training_quality_report,
+            'training_confusion_pairs': {
+                '|||'.join(key): int(value)
+                for key, value in self.training_confusion_pairs.items()
+            },
             'pairwise_similarities': {
                 '|||'.join(key): float(value)
                 for key, value in self.pairwise_similarities.items()
@@ -1434,6 +2130,10 @@ class PrototypeModel:
                         'path': str(item.get('path')),
                         'features': self._export_feature_dict(item.get('features') or {}),
                         'crop_embeddings': self._export_crop_embeddings(item.get('crop_embeddings') or []),
+                        'confusion_risk': bool(item.get('confusion_risk', False)),
+                        'confusion_risk_reason': item.get('confusion_risk_reason'),
+                        'confusion_margin': item.get('confusion_margin'),
+                        'nearest_competitor': item.get('nearest_competitor'),
                     }
                     for item in rows
                 ]

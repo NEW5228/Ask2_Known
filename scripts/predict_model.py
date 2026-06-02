@@ -25,6 +25,10 @@ def main():
         return 0
 
     print('Image:', result['image'])
+    print('Predicted label:', result.get('predicted_label'))
+    print(f'Confidence: {float(result.get("confidence", 0.0)):.6f}')
+    if result.get('top2_margin') is not None:
+        print(f'Top-2 margin: {float(result["top2_margin"]):.6f}')
     predictions = result.get('predictions') or []
     if not predictions:
         print('No predictions.')

@@ -9,7 +9,7 @@ from ask2know.features.feature_config import (
 )
 from ask2know.utils.io_utils import save_json
 
-VERSION = '0.4.61.1'
+VERSION = '0.4.63.0'
 
 
 def prompt_templates_for_preset(feature_preset):

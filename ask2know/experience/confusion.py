@@ -9,6 +9,7 @@ SOURCE_KEYS = (
     'hierarchy_score',
     'pairwise_score',
     'crop_rerank_score',
+    'pair_confusion_score',
     'concept_score',
 )
 
@@ -43,7 +44,13 @@ def _pair_recommendations(pair, contrast):
     wrong_sources = pair.get('wrong_supported_sources', {})
     recommendations = []
 
-    local_votes = sum(int(true_sources.get(key, 0)) for key in ('knn_score', 'hierarchy_score', 'pairwise_score', 'crop_rerank_score'))
+    local_votes = sum(int(true_sources.get(key, 0)) for key in (
+        'knn_score',
+        'hierarchy_score',
+        'pairwise_score',
+        'crop_rerank_score',
+        'pair_confusion_score',
+    ))
     if local_votes:
         recommendations.append('Local evidence sometimes supports the true class; use pair-specific nearest samples before changing the final label.')
     if int(wrong_sources.get('text_semantic_score', 0)):
@@ -285,7 +292,7 @@ class OnlineConfusionExperience:
         delta_by_label = {top_label: 0.0, second_label: 0.0}
         evidence_by_label = {top_label: {}, second_label: {}}
         row_by_label = {item.get('label'): item for item in adjusted[:2]}
-        local_sources = {'knn_score', 'hierarchy_score', 'pairwise_score', 'crop_rerank_score'}
+        local_sources = {'knn_score', 'hierarchy_score', 'pairwise_score', 'crop_rerank_score', 'pair_confusion_score'}
 
         for label in (top_label, second_label):
             row = row_by_label.get(label)

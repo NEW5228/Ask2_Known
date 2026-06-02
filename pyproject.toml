@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ask2know"
-version = "0.4.62.0"
+version = "0.4.63.0"
 description = "Low-sample active teaching framework prototype"
 readme = "README.md"
 requires-python = ">=3.9"

@@ -39,10 +39,15 @@ class DatasetLoader:
         samples = []
         if not self.train_dir.exists():
             return samples
+        allowed_labels = None
+        if self.objects_path.exists():
+            allowed_labels = {item.get('name') for item in self.load_objects() if item.get('name')}
         for class_dir in sorted(self.train_dir.iterdir()):
             if not class_dir.is_dir():
                 continue
             label = class_dir.name
+            if allowed_labels is not None and label not in allowed_labels:
+                continue
             for img in sorted(class_dir.rglob('*')):
                 if img.suffix.lower() in IMAGE_EXTS:
                     samples.append({'path': str(img), 'label': label})
@@ -73,10 +78,15 @@ class DatasetLoader:
         samples = []
         if not self.unlabeled_dir.exists():
             return samples
+        allowed_labels = None
+        if self.objects_path.exists():
+            allowed_labels = {item.get('name') for item in self.load_objects() if item.get('name')}
         for class_dir in sorted(self.unlabeled_dir.iterdir()):
             if not class_dir.is_dir():
                 continue
             label = class_dir.name
+            if allowed_labels is not None and label not in allowed_labels:
+                continue
             for img in sorted(class_dir.rglob('*')):
                 if img.suffix.lower() in IMAGE_EXTS:
                     samples.append({'path': str(img), 'label': label})

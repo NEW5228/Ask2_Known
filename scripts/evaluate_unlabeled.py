@@ -1,6 +1,7 @@
 import argparse
 import random
 import sys
+import time
 from collections import defaultdict
 from pathlib import Path
 
@@ -18,9 +19,9 @@ from ask2know.experience.confusion import PairVisualRuleMemory, OnlineConfusionE
 from ask2know.inference.diagnostics import diagnose_prediction
 from ask2know.inference.prototype_model import PrototypeModel
 from ask2know.learning.weights import AdaptiveWeights
-from ask2know.utils.io_utils import ensure_dir, load_yaml, save_json
+from ask2know.utils.io_utils import ensure_dir, load_json, load_yaml, save_json
 
-VERSION = '0.4.62.0'
+VERSION = '0.4.63.0'
 
 
 def class_names(objects):
@@ -55,6 +56,14 @@ def rounded_prediction(item):
         'crop_rerank_pair_similarity': None if item.get('crop_rerank_pair_similarity') is None else round(float(item['crop_rerank_pair_similarity']), 6),
         'crop_rerank_local_gap': None if item.get('crop_rerank_local_gap') is None else round(float(item['crop_rerank_local_gap']), 6),
         'crop_rerank_crop_count': int(item.get('crop_rerank_crop_count', 0)),
+        'pair_confusion_score': None if item.get('pair_confusion_score') is None else round(float(item['pair_confusion_score']), 6),
+        'pair_confusion_deep_score': None if item.get('pair_confusion_deep_score') is None else round(float(item['pair_confusion_deep_score']), 6),
+        'pair_confusion_score_weight_used': round(float(item.get('pair_confusion_score_weight_used', 0.0)), 6),
+        'pair_confusion_gate_reason': item.get('pair_confusion_gate_reason'),
+        'pair_confusion_pair_similarity': None if item.get('pair_confusion_pair_similarity') is None else round(float(item['pair_confusion_pair_similarity']), 6),
+        'pair_confusion_local_gap': None if item.get('pair_confusion_local_gap') is None else round(float(item['pair_confusion_local_gap']), 6),
+        'pair_confusion_training_risk_count': int(item.get('pair_confusion_training_risk_count', 0)),
+        'pair_confusion_evidence': item.get('pair_confusion_evidence', {}),
         'late_fusion_score': None if item.get('late_fusion_score') is None else round(float(item['late_fusion_score']), 6),
         'late_fusion_gate_reason': item.get('late_fusion_gate_reason'),
         'late_fusion_evidence': item.get('late_fusion_evidence', {}),
@@ -83,6 +92,12 @@ def main():
     parser.add_argument('--car-local-crops', action='store_true', help='Use extra car part crops for this evaluation run.')
     parser.add_argument('--shuffle', action='store_true', help='Shuffle evaluation samples before streaming evaluation.')
     parser.add_argument('--seed', type=int, default=42, help='Random seed used with --shuffle.')
+    parser.add_argument('--limit', type=int, default=None, help='Evaluate only the first N samples after optional shuffle. Default: all samples.')
+    parser.add_argument('--disable-fast-search', action='store_true', help='Score kNN/local evidence for all classes instead of the coarse top-N candidates.')
+    parser.add_argument('--fast-candidate-classes', type=int, default=None, help='Override fast_search.candidate_classes for this run.')
+    parser.add_argument('--profile', action='store_true', help='Print coarse timing checkpoints during evaluation.')
+    parser.add_argument('--model-cache', default=None, help='Path to a fitted PrototypeModel cache. Default: output_dir/prototype_model_cache.json')
+    parser.add_argument('--rebuild-model-cache', action='store_true', help='Ignore and overwrite an existing fitted model cache.')
     parser.add_argument('--online-experience', action='store_true', help='Learn from earlier revealed mistakes and rerank later low-margin confusion pairs.')
     parser.add_argument('--online-max-margin', type=float, default=0.035, help='Only apply online experience when top-2 score margin is at most this value.')
     parser.add_argument('--online-adjustment-weight', type=float, default=0.02, help='Weight for each learned pair/source signal.')
@@ -100,10 +115,26 @@ def main():
     parser.add_argument('--visual-rule-min-match-gap', type=float, default=0.04, help='Minimum sample-to-class match gap required to apply a visual rule.')
     parser.add_argument('--visual-rule-allow-rank-flip', action='store_true', help='Allow visual rules to change the top-1 prediction.')
     args = parser.parse_args()
+    started_at = time.perf_counter()
+    profile_path = None
+
+    def profile(message):
+        if args.profile:
+            elapsed = time.perf_counter() - started_at
+            print(f'[profile] {elapsed:.1f}s {message}', flush=True)
+            if profile_path is not None:
+                with open(profile_path, 'a', encoding='utf-8') as f:
+                    f.write(f'{elapsed:.1f}s {message}\n')
 
     cfg = load_yaml(args.config)
     if args.output_dir:
         cfg.setdefault('paths', {})['output_dir'] = args.output_dir
+    if args.disable_fast_search or args.fast_candidate_classes is not None:
+        fast_cfg = cfg.setdefault('similarity', {}).setdefault('fast_search', {})
+        if args.disable_fast_search:
+            fast_cfg['enable'] = False
+        if args.fast_candidate_classes is not None:
+            fast_cfg['candidate_classes'] = args.fast_candidate_classes
     if args.enable_hierarchy:
         hierarchy_cfg = cfg.setdefault('similarity', {}).setdefault('hierarchy', {})
         hierarchy_cfg.setdefault('enable', True)
@@ -142,16 +173,24 @@ def main():
     output_dir = Path(cfg['paths']['output_dir'])
     ensure_dir(output_dir)
     ensure_dir(output_dir / 'logs')
+    if args.profile:
+        profile_path = output_dir / 'logs' / 'evaluation_profile.log'
+        with open(profile_path, 'w', encoding='utf-8') as f:
+            f.write('')
+        profile('initialized')
 
     loader = DatasetLoader(dataset_dir)
     objects = loader.load_objects()
     labels = class_names(objects)
     train_samples = loader.load_train_samples()
     eval_samples = loader.load_eval_samples()
+    profile(f'loaded dataset metadata: train={len(train_samples)}, eval={len(eval_samples)}')
     if args.shuffle:
         rng = random.Random(args.seed)
         eval_samples = list(eval_samples)
         rng.shuffle(eval_samples)
+    if args.limit is not None:
+        eval_samples = list(eval_samples)[:max(0, int(args.limit))]
 
     if not labels:
         print('No classes found. Create train folders or objects.json first.')
@@ -175,16 +214,38 @@ def main():
         cfg['learning'].get('max_weight', 0.70),
     ).export()
 
-    model = PrototypeModel(
-        feature_spec['scoring_features'],
-        augmentation_config=cfg.get('augmentation', {}),
-        concept_config=cfg.get('concepts', {'enable': True, 'score_weight': 0.25}),
-        system_feature_names=feature_spec['system_features'],
-        feature_groups=feature_spec['group_features'],
-        similarity_config=cfg.get('similarity', {}),
-        deep_feature_config=deep_feature_config,
-        deep_cache_dir=Path(args.deep_cache_dir) if args.deep_cache_dir else output_dir / '.cache' / 'deep_features',
-    ).fit(train_samples)
+    deep_cache_dir = Path(args.deep_cache_dir) if args.deep_cache_dir else output_dir / '.cache' / 'deep_features'
+    model_cache_path = Path(args.model_cache) if args.model_cache else output_dir / 'prototype_model_cache.json'
+    model = None
+    if model_cache_path.exists() and not args.rebuild_model_cache:
+        cached = load_json(model_cache_path)
+        model_data = cached.get('model') if isinstance(cached, dict) and 'model' in cached else cached
+        model = PrototypeModel.from_export(
+            model_data,
+            deep_feature_config=deep_feature_config,
+            deep_cache_dir=deep_cache_dir,
+        )
+        profile(f'loaded model cache: {model_cache_path}')
+    if model is None:
+        model = PrototypeModel(
+            feature_spec['scoring_features'],
+            augmentation_config=cfg.get('augmentation', {}),
+            concept_config=cfg.get('concepts', {'enable': True, 'score_weight': 0.25}),
+            system_feature_names=feature_spec['system_features'],
+            feature_groups=feature_spec['group_features'],
+            similarity_config=cfg.get('similarity', {}),
+            deep_feature_config=deep_feature_config,
+            deep_cache_dir=deep_cache_dir,
+        ).fit(train_samples)
+        profile('fit model')
+        ensure_dir(model_cache_path.parent)
+        save_json(model_cache_path, {
+            'schema_version': VERSION,
+            'dataset_dir': str(dataset_dir),
+            'train_sample_count': len(train_samples),
+            'model': model.export(include_sample_features=True),
+        })
+        profile(f'saved model cache: {model_cache_path}')
 
     online_memory = None
     visual_rule_memory = None
@@ -307,6 +368,8 @@ def main():
             if should_update_model:
                 model.add_confirmed_sample(true_label, sample['path'])
                 online_summary['model_update_count'] += 1
+        if args.profile and (idx + 1) % 25 == 0:
+            profile(f'evaluated {idx + 1}/{len(eval_samples)}')
 
     total = len(rows)
     correct_count = sum(1 for row in rows if row['correct'])
@@ -334,6 +397,7 @@ def main():
         'evaluation_mode': {
             'shuffle': bool(args.shuffle),
             'seed': args.seed if args.shuffle else None,
+            'limit': args.limit,
             'online_experience': bool(args.online_experience),
             'visual_rules': visual_rule_memory is not None,
         },
@@ -368,6 +432,7 @@ def main():
     confusion_report_path = output_dir / 'confusion_experience_report.json'
     save_json(report_path, report)
     save_json(confusion_report_path, confusion_experience)
+    profile('saved reports')
     if online_memory is not None:
         save_json(output_dir / 'online_experience_report.json', online_memory.export())
     if visual_rule_memory is not None:

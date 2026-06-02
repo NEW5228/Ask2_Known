@@ -1,32 +1,32 @@
 # Ask2Know
 
-Ask2Know 是一个面向低样本图像识别任务的主动教学框架。
+当前版本：`0.4.63.0`
 
-当前版本：`0.4.61.1`
+Ask2Know 是一个面向低样本图像识别任务的本地交互式学习系统。系统以 CLIP 图像嵌入、原型相似度、kNN 近邻证据、可解释视觉特征和用户反馈为核心，支持在少量已知样本基础上逐步完善类别理解，并可导出 Python 离线模型包用于独立部署。
 
-核心流程：
+## 核心能力
 
-```text
-图片
--> 浅层可解释视觉特征
--> CLIP image embedding
--> prototype 相似度 + kNN 相似样本证据 + 概念相似度
--> 不确定性判断 / 主动提问
--> 用户确认或纠错
--> 更新权重、原型、样本池和经验记录
-```
+- 低样本图像分类：基于每类少量训练样本构建类别原型。
+- 相似度证据融合：结合 prototype、sub-prototype、kNN、文本语义、局部视觉规则等信号进行评分。
+- 主动提问与用户确认：在低置信度或类别混淆时向用户询问可解释视觉差异。
+- 在线经验积累：记录用户修正、类别混淆、pairwise 经验和视觉规则。
+- 桌面窗口操作：支持新建项目、导入数据、学习确认、类别维护和一键导出模型。
+- 离线模型导出：生成 `.a2kmodel.json` 和可复制使用的 Python 离线模型包。
 
-从 `0.4.1` 开始，CLIP 是必需依赖。系统不会回退到 OpenCV embedding。如果
-`torch`、`open_clip_torch` 或配置的 CLIP 权重不可用，运行会直接失败。
+## 环境要求
 
-## 安装
+- Python 3.9+
+- OpenCLIP 相关依赖
+- Windows 环境下可使用 `app_desktop.py` 桌面窗口
 
-需要 Python 3.9+。
+安装依赖：
 
 ```bat
 pip install -r requirements.txt
 pip install -e .
 ```
+
+从 v0.4.1 起，OpenCLIP 是必需运行依赖。系统不会回退到 OpenCV embedding。如果 `torch`、`open_clip_torch` 或配置的 CLIP 权重不可用，模型初始化会失败。
 
 默认 CLIP 配置：
 
@@ -35,9 +35,42 @@ model_name: ViT-B-32
 pretrained: laion2b_s34b_b79k
 ```
 
-第一次运行时 OpenCLIP 可能需要下载模型权重。如果当前机器没有网络，也没有本地缓存，初始化会失败。这是当前版本的预期行为。
+## 桌面窗口
 
-## 创建任务
+启动桌面窗口：
+
+```bat
+python app_desktop.py
+```
+
+窗口流程：
+
+1. 新建项目或打开已有项目配置。
+2. 导入训练图片、unknown 图片和可选评估图片。
+3. 加载项目并开始学习。
+4. 根据模型判断进行确认或修正。
+5. 在需要时维护类别清单。
+6. 导出离线模型包。
+
+训练图片支持两种导入方式：
+
+- 单类导入：为指定类别补充图片。
+- 批量导入：选择一个包含类别子文件夹的目录，系统按子文件夹名自动导入。
+
+批量导入目录示例：
+
+```text
+train_images/
+  class_a/
+    001.jpg
+    002.jpg
+  class_b/
+    001.jpg
+```
+
+## 创建项目
+
+命令行创建项目：
 
 ```bat
 python scripts\init_task.py --name fruit_task --classes apple banana pear --output D:\a2k_test
@@ -58,7 +91,7 @@ python scripts\init_task.py --name pet_task --classes cat dog --output D:\a2k_te
 - `car`
 - `traffic_sign`
 
-用户可选特征：
+用户可见特征：
 
 - `color`
 - `shape`
@@ -69,229 +102,97 @@ python scripts\init_task.py --name pet_task --classes cat dog --output D:\a2k_te
 - `text`
 - `sign`
 
-`quality` 是系统内部质量特征，用于判断主体清晰度、背景干扰、模糊和样本是否适合学习，不作为用户可选训练特征展示。
+`quality` 是系统内部质量特征，用于评估清晰度、背景干扰、模糊和样本可学习性，不作为用户可选特征展示。
 
-## 放入图片
+## 数据目录
 
-已知训练图片放到：
-
-```text
-D:\a2k_test\<task_name>\datasets\train\<class_name>
-```
-
-待学习 unknown 图片放到：
+项目创建后，主要数据目录如下：
 
 ```text
-D:\a2k_test\<task_name>\datasets\unknown
+datasets/train/<class>/       已确认训练样本
+datasets/unknown/             待学习、待确认样本
+datasets/unlabeled/<class>/   带真实标签的评估样本
+outputs/                      运行报告和模型缓存
+metadata/                     经验数据和项目元数据
+sample_pools/                 candidate、rejected 等样本池
 ```
 
-图片文件名可以任意。运行时会根据配置自动规范化训练集和 unknown 图片文件名。
+系统在运行时会根据配置规范化训练集和 unknown 图片文件名。删除类别时，桌面窗口只会从项目清单和配置中移除类别，不会删除本地图片文件。
 
-## v0.4.4 数据目录和推荐流程
+## 运行学习
 
-v0.4.4 推荐的主流程是：先为每个类别准备少量已知样本，放入 `datasets/train/<class>`，让系统从一个可靠的小训练集开始。`datasets/unknown/` 的自动粗分功能保留为辅助整理工具，不建议直接把粗分结果当成最终训练集。
-
-```text
-datasets/train/<class>/       已确认训练样本，推荐主入口
-datasets/unknown/             待学习、待整理的混合未知图片
-datasets/unlabeled/<class>/   带真实标签的验证集，用于计算准确率
-```
-
-`run_demo.py` 会读取 `datasets/unknown/` 作为主动学习样本。`datasets/unlabeled/<class>/` 不进入主动学习，只用于评估。
-
-## v0.4.4 Bootstrap 粗分功能
-
-如果用户手里只有一堆混合图片，可以先放入 `datasets/unknown/`，再用 bootstrap 脚本粗分：
-
-```bat
-python scripts\bootstrap_clusters.py --config D:\a2k_test\<task_name>\configs\task_config.yaml
-```
-
-如果用户已经知道有哪些类别名，可以传入名字：
-
-```bat
-python scripts\bootstrap_clusters.py --config D:\a2k_test\<task_name>\configs\task_config.yaml --names 张三 李四 王五 赵六
-```
-
-脚本会读取 `datasets/unknown/`，用 CLIP embedding 聚类，展示每组代表图片和低相似度离群候选，让用户确认每组叫什么。复制前会生成 review 清单，并允许按单张图片跳过；只有 review 计划中保留的图片才会复制到 `datasets/train/<class>/`。原始 `unknown/` 图片会保留。
-
-只想检查聚类和复制计划，不写入训练集时使用：
-
-```bat
-python scripts\bootstrap_clusters.py --config D:\a2k_test\<task_name>\configs\task_config.yaml --report-only
-```
-
-注意：bootstrap 是粗分辅助工具，不保证每个 cluster 都纯净。正式任务仍建议从人工整理的少量 `train/<class>` 样本开始；bootstrap 结果应由用户复核后再进入训练库。
-
-## 验证准确率
-
-把验证图片按真实类别放入 `datasets/unlabeled/<class>/` 后运行：
-
-```bat
-python scripts\evaluate_unlabeled.py --config D:\a2k_test\<task_name>\configs\task_config.yaml
-```
-
-在线评估可模拟用户逐张确认标签，并默认把所有已确认样本增量加入模型：
-
-```bat
-python scripts\evaluate_unlabeled.py --config D:\a2k_test\<task_name>\configs\task_config.yaml --online-experience
-```
-
-评估报告会写入：
-
-```text
-outputs/evaluation_report.json
-```
-
-报告包含总准确率、每类准确率、混淆情况和错误样本列表。
-
-## 运行
+命令行运行：
 
 ```bat
 python run_demo.py --config D:\a2k_test\<task_name>\configs\task_config.yaml
 ```
 
-需要手动预览图片时：
+需要图片预览时：
 
 ```bat
 python run_demo.py --config D:\a2k_test\<task_name>\configs\task_config.yaml --preview
 ```
 
-## 关键配置
+桌面窗口中，点击“加载项目”后可在“学习”页开始逐张确认。模型会显示当前判断、候选类别、分数和 Top2 差距。若判断正确，直接确认；若判断错误，选择真实类别或输入新类别后提交修正。
 
-新任务默认使用 CLIP + hybrid similarity：
+## 评估
 
-```yaml
-deep_features:
-  enable: true
-  provider: open_clip
-  model_name: ViT-B-32
-  pretrained: laion2b_s34b_b79k
-  device: auto
-  feature_name: image_embedding
-  cache: true
-  fallback_to_opencv: false
-  include_augmented: false
-  multi_crop:
-    enable: true
-    crops:
-      - full
-      - center
-      - five_crop
-      - object
-      - head
-    center_ratio: 0.86
-    corner_ratio: 0.72
-
-similarity:
-  mode: hybrid
-  knn:
-    enable: true
-    k: 3
-    score_weight: 0.20
-  sub_prototypes:
-    enable: true
-    max_centers: 3
-    min_samples_per_center: 8
-    score_weight: 0.06
-    mode: conservative
-    min_gain_over_prototype: 0.015
-    min_top_gap: 0.0
-    allow_rank_flip: true
-    max_base_margin_for_flip: 0.010
-    rank_flip_prototype_veto_margin: 0.003
-  text_semantic:
-    enable: true
-    score_weight: 0.08
-    prompt_templates:
-      - "a photo of a {label}"
-      - "a close-up photo of a {label}"
-  pairwise_rerank:
-    enable: true
-    local_k: 5
-    score_weight: 0.25
-    max_score_margin: 0.018
-    min_pair_similarity: 0.90
-    min_local_gap: 0.008
-  crop_rerank:
-    enable: true
-    max_candidate_classes: 3
-    local_k: 5
-    score_weight: 0.18
-    max_score_margin: 0.018
-    min_pair_similarity: 0.94
-    min_local_gap: 0.006
-    use_full_crop: false
-    trigger_mode: margin_and_pair_similarity
-  late_fusion:
-    enable: true
-    max_candidate_classes: 3
-    weights:
-      base_score: 1.0
-      knn_score: 0.8
-      text_semantic_score: 0.8
-      crop_rerank_score: 0.4
-  robust_prototype:
-    enable: true
-    deep_only: true
-    min_samples: 24
-    trim_fraction: 0.08
-    report_margin: 0.015
-    top_outliers_per_class: 5
-  concept_gate:
-    enable: true
-    min_top_gap: 0.035
-    weak_score_weight: 0.00
-
-diagnostics:
-  low_margin_threshold: 0.015
-  weak_signal_threshold: 0.005
-
-concepts:
-  enable: true
-  score_weight: 0.05
-```
-
-预测结果会显示分数来源，例如：
+将评估图片按真实类别放入：
 
 ```text
-score sources: proto:0.731, subproto:0.814, knn:0.802, text:0.691, crop:0.826, concept:0.744
-nearest: 0.817 D:\...\datasets\train\apple\apple_003.jpg
+datasets/unlabeled/<class>/
 ```
 
-含义：
+运行评估：
 
-- `proto`：当前图片和类别原型的相似度。
-- `knn`：当前图片和最近 confirmed 训练样本的相似度。
-- 	ext：当前图片 CLIP embedding 和类别名文本 prompt embedding 的相似度。
-- concept：当前图片和类别可解释概念原型的相似度。
-- `nearest`：系统认为最相似的已知训练样本。
+```bat
+python scripts\evaluate_unlabeled.py --config D:\a2k_test\<task_name>\configs\task_config.yaml
+```
 
-## 用户反馈
+启用在线经验模拟：
 
-系统不确定时，会询问用户可判断的问题，而不是让用户判断 raw embedding。
+```bat
+python scripts\evaluate_unlabeled.py --config D:\a2k_test\<task_name>\configs\task_config.yaml --online-experience
+```
 
-典型问题包括：
+评估报告输出：
 
-- 颜色是否可靠
-- 形状是否重要
-- 纹理或表面特征是否可靠
-- 部位结构是否重要
-- 文字/标识是否有区分作用
-- 当前图片是否适合加入训练
+```text
+outputs/evaluation_report.json
+```
 
-用户确认或纠错后，系统会更新：
+## 离线模型导出
 
-- 特征权重
-- 类别原型
-- CLIP/kNN 证据缓存
-- 类别对混淆经验
-- 样本池
-- 运行日志和总结
+桌面窗口支持一键导出离线模型包。用户可以自定义导出位置和模型名称；如果不填写，则使用默认位置和默认命名。
 
-## 输出文件
+默认输出：
 
-主要输出在任务的 `outputs/` 目录：
+```text
+outputs_deploy/<task>_offline_model_<timestamp>.a2kmodel.json
+outputs_deploy/<task>_offline_model_<timestamp>_offline_model_package/
+```
+
+命令行导出模型：
+
+```bat
+python scripts\export_model.py --config D:\a2k_test\<task_name>\configs\task_config.yaml
+```
+
+使用已有模型缓存导出：
+
+```bat
+python scripts\export_model.py --config D:\a2k_test\<task_name>\configs\task_config.yaml --model-cache D:\a2k_test\<task_name>\outputs\prototype_model_cache.json
+```
+
+生成 Python 离线模型包：
+
+```bat
+python scripts\package_model.py --model D:\path\model.a2kmodel.json --output D:\path\offline_model_package
+```
+
+离线包可用于单张图片预测、文件夹批量预测，或按需启动本地服务脚本。
+
+## 主要输出文件
 
 ```text
 outputs/feature_weights.json
@@ -305,33 +206,15 @@ outputs/class_understanding_summary.json
 outputs/class_understanding_summary.md
 ```
 
-样本池和元数据在任务项目目录：
+## 版本说明
 
-```text
-metadata/
-sample_pools/
-```
+v0.4.63.0 重点更新：
 
-## 添加类别
-
-已有任务中追加新类别：
-
-```bat
-python scripts\add_class.py --project D:\a2k_test\fruit_task --class cherry
-```
-
-然后把该类别训练图片放到：
-
-```text
-D:\a2k_test\fruit_task\datasets\train\cherry
-```
-
-## 说明
-
-- Ask2Know 不是大模型训练框架。
-- CLIP 用作必需的图像 embedding 提取器。
-- OpenCV 浅层特征仍然保留，用于可解释提问和概念总结。
-- confirmed 样本进入 `datasets/train/<class>`。
-- candidate、rejected、unknown 样本进入 `sample_pools/`。
-
+- 优化桌面窗口布局和学习页交互。
+- 增加批量导入训练文件夹。
+- 增加项目类别删除能力。
+- 增加项目内容表格滚动条。
+- 增加学习页明确的模型判断输出。
+- 增加一键导出离线模型包，并支持自定义导出位置和模型名称。
+- 增加 Python 离线模型包、预测脚本和本地服务脚本。
 
