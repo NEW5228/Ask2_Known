@@ -9,7 +9,7 @@ from ask2know.features.feature_config import (
 )
 from ask2know.utils.io_utils import save_json
 
-VERSION = '0.4.63.0'
+VERSION = '0.4.63.1'
 
 
 def prompt_templates_for_preset(feature_preset):
@@ -183,6 +183,9 @@ diagnostics:
   low_margin_threshold: 0.015
   weak_signal_threshold: 0.005
 
+validation:
+  pass_accuracy_threshold: 0.85
+
 learning:
   initial_weights:
 {weight_lines}
@@ -328,11 +331,6 @@ def create_task_project(name, classes, output='.', feature_preset='auto', featur
 {dataset_dir / 'unknown'}
 ```
 
-验证准确率样本按真实类别放入：
-
-```text
-{dataset_dir / 'unlabeled' / 'class_name'}
-```
 ''', encoding='utf-8')
 
     return {

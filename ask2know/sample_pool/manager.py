@@ -15,7 +15,7 @@ def _safe_name(name):
 
 
 class SamplePoolManager:
-    def __init__(self, project_root=None, output_dir=None, dataset_dir=None, version='0.4.63.0'):
+    def __init__(self, project_root=None, output_dir=None, dataset_dir=None, version='0.4.63.1'):
         self.version = version
         self.project_root = Path(project_root) if project_root else None
         self.output_dir = Path(output_dir) if output_dir else None

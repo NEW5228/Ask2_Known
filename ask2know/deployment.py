@@ -29,6 +29,16 @@ def expand_concept_feature_hints(concepts, feature_spec):
     return expanded
 
 
+def _require_passing_validation(output_dir):
+    status_path = Path(output_dir) / 'validation_status.json'
+    if not status_path.exists():
+        raise RuntimeError('请先验证模型。')
+    status = load_json(status_path)
+    if not bool(status.get('passed', False)):
+        raise RuntimeError('验证未通过。')
+    return status
+
+
 def build_deployment_bundle(config_path, output_path=None, include_sample_features=True):
     config_path = Path(config_path).expanduser().resolve()
     cfg = load_yaml(config_path)
@@ -44,6 +54,7 @@ def build_deployment_bundle(config_path, output_path=None, include_sample_featur
         raise RuntimeError('No classes found. Create train folders or objects.json first.')
     if not train_samples:
         raise RuntimeError(f'No train samples found in {Path(dataset_dir) / "train"}')
+    validation_status = _require_passing_validation(output_dir)
 
     concepts = loader.load_concepts()
     deep_feature_config = resolve_deep_feature_config(cfg)
@@ -85,6 +96,7 @@ def build_deployment_bundle(config_path, output_path=None, include_sample_featur
         'weights': weights,
         'visible_weights': summarize_group_weights(weights, feature_spec),
         'deep_feature_config': deep_feature_config,
+        'validation_status': validation_status,
         'model': model.export(include_sample_features=include_sample_features),
     }
     save_json(output_path, bundle)
@@ -107,6 +119,7 @@ def build_deployment_bundle_from_model_cache(
     loader = DatasetLoader(dataset_dir)
     objects = loader.load_objects()
     labels = class_names(objects)
+    validation_status = _require_passing_validation(output_dir)
     concepts = loader.load_concepts()
     deep_feature_config = resolve_deep_feature_config(cfg)
     feature_spec = parse_feature_config(cfg, classes=labels or cfg.get('classes', []))
@@ -145,6 +158,7 @@ def build_deployment_bundle_from_model_cache(
         'weights': weights,
         'visible_weights': summarize_group_weights(weights, feature_spec),
         'deep_feature_config': deep_feature_config,
+        'validation_status': validation_status,
         'model': model.export(include_sample_features=include_sample_features),
     }
     save_json(output_path, bundle)

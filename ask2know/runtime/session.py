@@ -183,7 +183,6 @@ class LearningSession:
     def project_summary(self):
         if self.cfg is None:
             return {}
-        eval_count = len(self.loader.load_eval_samples()) if self.loader else 0
         return {
             'config_path': str(self.config_path),
             'project_root': self.cfg.get('paths', {}).get('project_root'),
@@ -194,7 +193,6 @@ class LearningSession:
             'display_features': list(self.feature_spec.get('display_features', [])),
             'train_count': len(self.train_samples),
             'unknown_count': len(self.unknown_samples),
-            'eval_count': eval_count,
         }
 
     def advance(self):

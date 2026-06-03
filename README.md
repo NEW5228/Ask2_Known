@@ -1,6 +1,6 @@
 # Ask2Know
 
-当前版本：`0.4.63.0`
+当前版本：`0.4.63.1`
 
 Ask2Know 是一个面向低样本图像识别任务的本地交互式学习系统。系统以 CLIP 图像嵌入、原型相似度、kNN 近邻证据、可解释视觉特征和用户反馈为核心，支持在少量已知样本基础上逐步完善类别理解，并可导出 Python 离线模型包用于独立部署。
 
@@ -137,6 +137,12 @@ python run_demo.py --config D:\a2k_test\<task_name>\configs\task_config.yaml --p
 
 ## 评估
 
+桌面端“验证”页会根据已确认的 unknown 学习记录生成：
+
+```text
+outputs/unknown_validation_report.json
+```
+
 将评估图片按真实类别放入：
 
 ```text
@@ -159,6 +165,7 @@ python scripts\evaluate_unlabeled.py --config D:\a2k_test\<task_name>\configs\ta
 
 ```text
 outputs/evaluation_report.json
+outputs/unknown_validation_report.json
 ```
 
 ## 离线模型导出
@@ -208,6 +215,11 @@ outputs/class_understanding_summary.md
 
 ## 版本说明
 
+v0.4.63.1 重点更新：
+- 增加基于已确认 unknown 学习记录的模型验证页。
+- 模型导出前要求先完成验证，验证通过后才能导出。
+- 验证结果对用户只显示“验证通过”或“验证未通过”。
+
 v0.4.63.0 重点更新：
 
 - 优化桌面窗口布局和学习页交互。
@@ -217,4 +229,3 @@ v0.4.63.0 重点更新：
 - 增加学习页明确的模型判断输出。
 - 增加一键导出离线模型包，并支持自定义导出位置和模型名称。
 - 增加 Python 离线模型包、预测脚本和本地服务脚本。
-

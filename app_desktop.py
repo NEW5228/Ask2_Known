@@ -30,11 +30,12 @@ from ask2know.deployment import (
     build_deployment_bundle,
     build_deployment_bundle_from_model_cache,
 )
+from ask2know.evaluation import evaluate_unknown_audit_logs
 from ask2know.features.feature_config import PRESET_DEFAULT_GROUPS, USER_FEATURE_GROUPS
 from ask2know.runtime.project import create_task_project
 from ask2know.runtime.session import LearningSession, add_class_to_project
 from ask2know.sample_pool.manager import _safe_name
-from ask2know.utils.io_utils import load_yaml, save_json
+from ask2know.utils.io_utils import load_json, load_yaml, save_json
 from scripts.package_model import build_package
 
 
@@ -196,15 +197,18 @@ class Ask2KnowDesktopApp:
         self.project_tab = ttk.Frame(self.notebook, padding=12, style='Page.TFrame')
         self.learn_tab = ttk.Frame(self.notebook, padding=12, style='Page.TFrame')
         self.report_tab = ttk.Frame(self.notebook, padding=12, style='Page.TFrame')
+        self.validate_tab = ttk.Frame(self.notebook, padding=12, style='Page.TFrame')
         self.deploy_tab = ttk.Frame(self.notebook, padding=12, style='Page.TFrame')
         self.notebook.add(self.project_tab, text='项目')
         self.notebook.add(self.learn_tab, text='学习')
         self.notebook.add(self.report_tab, text='报告')
+        self.notebook.add(self.validate_tab, text='验证')
         self.notebook.add(self.deploy_tab, text='导出模型')
 
         self._build_project_tab()
         self._build_learning_tab()
         self._build_report_tab()
+        self._build_validate_tab()
         self._build_deploy_tab()
 
     def _configure_style(self):
@@ -261,7 +265,6 @@ class Ask2KnowDesktopApp:
         ttk.Button(data_actions, text='导入单类训练图片', command=self.import_train_images).pack(side=LEFT)
         ttk.Button(data_actions, text='批量导入训练文件夹', command=self.import_train_folder).pack(side=LEFT, padx=(8, 0))
         ttk.Button(data_actions, text='导入 unknown', command=self.import_unknown_images).pack(side=LEFT, padx=(8, 0))
-        ttk.Button(data_actions, text='导入评估图片', command=self.import_eval_images).pack(side=LEFT, padx=(8, 0))
 
         config_frame = ttk.LabelFrame(self.project_tab, text='当前配置', padding=10)
         config_frame.pack(fill=X, pady=(0, 10))
@@ -458,6 +461,27 @@ class Ask2KnowDesktopApp:
         self.report_text = ttk.Label(report_frame, text='报告会在结束学习后生成。', justify='left', wraplength=1000)
         self.report_text.pack(fill=X, anchor='nw')
 
+    def _build_validate_tab(self):
+        header = ttk.Frame(self.validate_tab)
+        header.pack(fill=X, pady=(0, 12))
+        ttk.Label(header, text='验证模型', style='PageTitle.TLabel').pack(anchor='w')
+        ttk.Label(header, text='根据已确认的 unknown 学习记录验证当前模型。', style='PageSubtitle.TLabel').pack(anchor='w', pady=(3, 0))
+
+        validate_frame = ttk.LabelFrame(self.validate_tab, text='验证', padding=10)
+        validate_frame.pack(fill=X)
+        ttk.Button(
+            validate_frame,
+            text='验证模型',
+            command=self.validate_current_project,
+            style='Primary.TButton',
+            width=18,
+        ).pack(anchor='w')
+
+        result_frame = ttk.LabelFrame(self.validate_tab, text='验证结果', padding=10)
+        result_frame.pack(fill=X, pady=(10, 0))
+        self.validation_summary = ttk.Label(result_frame, text='尚未验证。', justify='left', wraplength=1000)
+        self.validation_summary.pack(fill=X, anchor='nw')
+
     def _build_deploy_tab(self):
         model_frame = ttk.LabelFrame(self.deploy_tab, text='离线模型', padding=8)
         model_frame.pack(fill=X)
@@ -595,7 +619,6 @@ class Ask2KnowDesktopApp:
             objects = loader.load_objects()
             train_samples = loader.load_train_samples()
             unknown_samples = loader.load_unknown_samples()
-            eval_samples = loader.load_eval_samples()
         except Exception as exc:
             self.project_info.insert('', END, text='读取失败', values=(str(exc),))
             return
@@ -607,7 +630,6 @@ class Ask2KnowDesktopApp:
             '类别': ', '.join([item.get('name', '') for item in objects]),
             '训练样本数': str(len(train_samples)),
             'unknown 样本数': str(len(unknown_samples)),
-            '评估样本数': str(len(eval_samples)),
         }
         for key, value in items.items():
             self.project_info.insert('', END, text=key, values=(value,))
@@ -786,24 +808,6 @@ class Ask2KnowDesktopApp:
         count = self.copy_many(paths, dst_dir)
         self.refresh_project_info()
         self.set_status(f'已导入 {count} 张 unknown 图片。')
-
-    def import_eval_images(self):
-        try:
-            cfg, _ = self.config()
-            dataset_dir = Path(cfg['paths']['dataset_dir'])
-            classes = [item.get('name') for item in DatasetLoader(dataset_dir).load_objects()]
-        except Exception as exc:
-            messagebox.showerror('导入失败', str(exc))
-            return
-        cls = simpledialog.askstring('评估类别', '请输入评估图片真实类别：\n' + ', '.join(classes), initialvalue=classes[0] if classes else '')
-        if not cls:
-            return
-        paths = self.choose_images()
-        if not paths:
-            return
-        count = self.copy_many(paths, dataset_dir / 'unlabeled' / _safe_name(cls))
-        self.refresh_project_info()
-        self.set_status(f'已导入 {count} 张评估图片到 {cls}。')
 
     def choose_images(self):
         return filedialog.askopenfilenames(
@@ -1308,6 +1312,38 @@ class Ask2KnowDesktopApp:
         )
         if path:
             self.export_model_output_var.set(path)
+
+    def validate_current_project(self):
+        config_path = self.export_config_var.get().strip() or str(self.config_path or '')
+        if not config_path:
+            messagebox.showwarning('缺少项目', '请先在“项目”页新建项目或打开配置。')
+            return
+        self.export_config_var.set(config_path)
+
+        def validate():
+            cfg = load_yaml(config_path)
+            output_dir = Path(cfg['paths']['output_dir'])
+            active_session = self.session
+            if active_session is not None and Path(active_session.config_path) == Path(config_path).expanduser().resolve():
+                logs = list(getattr(active_session, 'logs', []) or [])
+                source = 'current_session'
+            else:
+                log_path = output_dir / 'logs' / 'demo_log.json'
+                logs = load_json(log_path) if log_path.exists() else []
+                source = 'saved_log'
+            report = evaluate_unknown_audit_logs(cfg, logs, output_dir)
+            return report, output_dir / 'unknown_validation_report.json', source
+
+        def done(result):
+            report, report_path, source = result
+            standard = report.get('validation_standard') or {}
+            passed = bool(standard.get('passed', False))
+            status_text = '验证通过' if passed else '验证未通过'
+            self.validation_summary.configure(text=status_text)
+            self.refresh_project_info()
+            self.set_status(status_text + '。')
+
+        self.run_worker('正在验证当前模型...', validate, done)
 
     def export_deploy_model(self):
         config_path = self.export_config_var.get().strip() or str(self.config_path or '')

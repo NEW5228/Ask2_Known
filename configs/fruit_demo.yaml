@@ -127,6 +127,9 @@ diagnostics:
   low_margin_threshold: 0.015
   weak_signal_threshold: 0.005
 
+validation:
+  pass_accuracy_threshold: 0.85
+
 learning:
   initial_weights:
     color: 0.03

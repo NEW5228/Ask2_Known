@@ -40,6 +40,10 @@ def main():
     print('Schema:', bundle.get('schema_version'))
     print('Classes:', ', '.join(item.get('name', '') for item in bundle.get('classes', [])))
     print('Training samples:', sample_count)
+    validation = bundle.get('validation_status')
+    if validation:
+        passed = bool(validation.get('passed', False))
+        print('Validation passed' if passed else 'Validation failed')
     print('Predict one image: python scripts\\predict_model.py --model', output_path, '--image path\\to\\image.jpg')
     print('Predict a folder: python scripts\\predict_folder.py --model', output_path, '--input path\\to\\images --output predictions.csv')
     print('Runtime dependency: Python environment with OpenCV, NumPy, torch, and open_clip_torch.')
