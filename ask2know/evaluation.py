@@ -2,6 +2,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from ask2know.inference.diagnostics import diagnose_prediction
+from ask2know.inference.taxonomy import taxonomy_level_summary
 from ask2know.utils.io_utils import save_json
 
 
@@ -14,6 +15,13 @@ def _rounded_prediction(item):
         'subprototype_score': _round_optional(item.get('subprototype_score')),
         'knn_score': _round_optional(item.get('knn_score')),
         'text_semantic_score': _round_optional(item.get('text_semantic_score')),
+        'taxonomy_path': list(item.get('taxonomy_path') or []),
+        'taxonomy_score': _round_optional(item.get('taxonomy_score')),
+        'reference_icon_score': _round_optional(item.get('reference_icon_score')),
+        'field_clip_score': _round_optional(item.get('field_clip_score')),
+        'field_shape_score': _round_optional(item.get('field_shape_score')),
+        'local_leaf_score': _round_optional(item.get('local_leaf_score')),
+        'fine_grained_score': _round_optional(item.get('fine_grained_score')),
         'pairwise_score': _round_optional(item.get('pairwise_score')),
         'crop_rerank_score': _round_optional(item.get('crop_rerank_score')),
         'late_fusion_score': _round_optional(item.get('late_fusion_score')),
@@ -38,6 +46,7 @@ def evaluate_labeled_samples(
     low_margin_threshold=0.015,
     weak_signal_threshold=0.005,
     schema_version='validation_report_v1',
+    taxonomy_config=None,
 ):
     rows = []
     confusion = defaultdict(lambda: defaultdict(int))
@@ -48,6 +57,7 @@ def evaluate_labeled_samples(
     for idx, sample in enumerate(samples or []):
         results = model.predict(sample['path'], weights)
         predicted = results[0]['label'] if results else None
+        predicted_path = list(results[0].get('taxonomy_path') or []) if results else []
         true_label = sample.get('label')
         correct = predicted == true_label
         diagnosis = diagnose_prediction(
@@ -69,6 +79,7 @@ def evaluate_labeled_samples(
             'path': sample['path'],
             'true_label': true_label,
             'predicted_label': predicted,
+            'predicted_path': predicted_path,
             'correct': correct,
             'top_predictions': [_rounded_prediction(item) for item in results[:max(1, int(top_k))]],
             'diagnosis': diagnosis,
@@ -97,6 +108,7 @@ def evaluate_labeled_samples(
             }
             for label, item in sorted(per_class.items())
         },
+        'taxonomy_level_summary': taxonomy_level_summary(rows, taxonomy_config or {}),
         'confusion': {
             true_label: dict(preds)
             for true_label, preds in sorted(confusion.items())
@@ -139,8 +151,8 @@ def evaluate_unknown_audit_logs(cfg, logs, output_dir):
     correct_count = sum(1 for row in rows if row['correct'])
     accuracy = correct_count / max(1, total)
     report = {
-        'schema_version': 'unknown_audit_validation_v1',
-        'source': 'confirmed_unknown_logs',
+        'schema_version': 'unlabeled_audit_validation_v1',
+        'source': 'confirmed_unlabeled_logs',
         'eval_sample_count': total,
         'correct_count': correct_count,
         'accuracy': accuracy,
@@ -164,10 +176,12 @@ def evaluate_unknown_audit_logs(cfg, logs, output_dir):
         'samples': rows,
     }
     output_dir = Path(output_dir)
+    save_json(output_dir / 'unlabeled_validation_report.json', report)
+    # Backward-compatible filename for older integrations.
     save_json(output_dir / 'unknown_validation_report.json', report)
     save_json(output_dir / 'validation_status.json', {
         'schema_version': 'validation_status_v1',
-        'source': 'unknown_audit',
+        'source': 'unlabeled_audit',
         'passed': report['validation_standard']['passed'],
     })
     return report

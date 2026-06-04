@@ -3,7 +3,9 @@ import numpy as np
 from ask2know.features.basic_features import extract_features, extract_features_from_image
 from ask2know.features.deep_adapter import DeepFeatureAdapter, DEFAULT_DEEP_FEATURE_NAME
 from ask2know.concepts.basic_concepts import concepts_from_features, concept_similarity
+from ask2know.inference.field_specialist import extract_field_shape_descriptor
 from ask2know.inference.hierarchy import label_hierarchy
+from ask2know.inference.taxonomy import TaxonomySpec
 
 CONCEPTS_BY_GROUP = {
     'color': {
@@ -299,6 +301,69 @@ class PrototypeModel:
             str(name): max(0.0, float(weight))
             for name, weight in dict(self.hierarchy_config.get('level_weights') or {}).items()
         }
+        self.taxonomy_spec = TaxonomySpec(self.similarity_config.get('taxonomy', {}))
+        self.taxonomy_enabled = self.taxonomy_spec.enabled
+        self.taxonomy_score_weight = self.taxonomy_spec.score_weight
+        self.recognition_mode = str(self.similarity_config.get('recognition_mode', 'multilayer')).strip().lower()
+        if self.recognition_mode in {'flat', 'single', 'single_layer'}:
+            self.recognition_mode = 'flat'
+            self.taxonomy_enabled = False
+        else:
+            self.recognition_mode = 'multilayer'
+        self.reference_icon_config = dict(self.similarity_config.get('reference_icon_rerank', {}))
+        self.reference_icon_enabled = self.recognition_mode != 'flat' and bool(self.reference_icon_config.get('enable', False))
+        self.reference_icon_score_weight = max(0.0, min(0.5, float(self.reference_icon_config.get('score_weight', 0.12))))
+        self.reference_icon_max_score_margin = max(0.0, float(self.reference_icon_config.get('max_score_margin', 0.20)))
+        self.fine_grained_config = dict(self.similarity_config.get('fine_grained_rerank', {}))
+        self.fine_grained_enabled = self.recognition_mode != 'flat' and bool(self.fine_grained_config.get('enable', False))
+        self.fine_grained_score_weight = max(0.0, min(0.5, float(self.fine_grained_config.get('score_weight', 0.18))))
+        self.fine_grained_candidate_count = max(2, int(self.fine_grained_config.get('max_candidate_classes', 5)))
+        self.fine_grained_max_score_margin = max(0.0, float(self.fine_grained_config.get('max_score_margin', 0.20)))
+        self.fine_grained_group_level = str(self.fine_grained_config.get('group_level', 'symbol_type'))
+        self.fine_grained_min_group_size = max(2, int(self.fine_grained_config.get('min_group_size', 2)))
+        self.field_clip_config = dict(self.similarity_config.get('field_clip_rerank', {}))
+        self.field_clip_enabled = self.recognition_mode != 'flat' and bool(self.field_clip_config.get('enable', False))
+        self.field_clip_score_weight = max(0.0, min(0.5, float(self.field_clip_config.get('score_weight', 0.12))))
+        self.field_clip_candidate_count = max(2, int(self.field_clip_config.get('max_candidate_classes', 5)))
+        self.field_clip_max_score_margin = max(0.0, float(self.field_clip_config.get('max_score_margin', 0.08)))
+        self.field_clip_group_level = str(self.field_clip_config.get('group_level', 'symbol_type'))
+        self.field_clip_min_group_size = max(2, int(self.field_clip_config.get('min_group_size', 2)))
+        self.field_clip_crop_ids = {
+            str(item)
+            for item in (self.field_clip_config.get('crop_ids') or ['traffic_inner', 'traffic_symbol'])
+        }
+        self.field_shape_config = dict(self.similarity_config.get('field_shape_rerank', {}))
+        self.field_shape_enabled = self.recognition_mode != 'flat' and bool(self.field_shape_config.get('enable', False))
+        self.field_shape_score_weight = max(0.0, min(0.5, float(self.field_shape_config.get('score_weight', 0.10))))
+        self.field_shape_candidate_count = max(2, int(self.field_shape_config.get('max_candidate_classes', 5)))
+        self.field_shape_max_score_margin = max(0.0, float(self.field_shape_config.get('max_score_margin', 0.08)))
+        self.field_shape_group_level = str(self.field_shape_config.get('group_level', 'symbol_type'))
+        self.field_shape_min_group_size = max(2, int(self.field_shape_config.get('min_group_size', 2)))
+        self.local_leaf_config = dict(self.similarity_config.get('local_leaf_rerank', {}))
+        self.local_leaf_enabled = self.recognition_mode != 'flat' and bool(self.local_leaf_config.get('enable', False))
+        self.local_leaf_score_weight = max(0.0, min(0.8, float(self.local_leaf_config.get('score_weight', 0.26))))
+        self.local_leaf_parent_level = str(self.local_leaf_config.get('parent_level', 'symbol_type'))
+        self.local_leaf_min_group_size = max(2, int(self.local_leaf_config.get('min_group_size', 2)))
+        self.local_leaf_min_parent_margin = float(self.local_leaf_config.get('min_parent_margin', 0.0))
+        self.local_leaf_max_parent_margin = max(0.0, float(self.local_leaf_config.get('max_parent_score_margin', 0.20)))
+        self.local_leaf_min_local_gap = max(0.0, float(self.local_leaf_config.get('min_local_gap', 0.0)))
+        self.local_leaf_use_crop = bool(self.local_leaf_config.get('use_crop', True))
+        self.local_leaf_use_field_clip = bool(self.local_leaf_config.get('use_field_clip', True))
+        self.local_leaf_crop_ids = {
+            str(item)
+            for item in (self.local_leaf_config.get('crop_ids') or ['traffic_inner', 'traffic_symbol'])
+        }
+        self.local_leaf_component_weights = {
+            str(name): max(0.0, float(weight))
+            for name, weight in dict(self.local_leaf_config.get('component_weights') or {}).items()
+        }
+        if not self.local_leaf_component_weights:
+            self.local_leaf_component_weights = {
+                'prototype_score': 0.12,
+                'knn_score': 0.34,
+                'field_crop_score': 0.38,
+                'field_clip_score': 0.16,
+            }
         self.robust_config = dict(self.similarity_config.get('robust_prototype', {}))
         self.robust_enabled = bool(self.robust_config.get('enable', True))
         self.robust_deep_only = bool(self.robust_config.get('deep_only', True))
@@ -343,6 +408,16 @@ class PrototypeModel:
         self.label_hierarchies = {}
         self.hierarchy_group_labels = {}
         self.hierarchy_prototypes = {}
+        self.taxonomy_label_paths = {}
+        self.taxonomy_node_prototypes = {}
+        self.taxonomy_node_counts = {}
+        self.reference_icon_features = {}
+        self.fine_grained_group_by_label = {}
+        self.fine_grained_group_prototypes = {}
+        self.field_clip_group_by_label = {}
+        self.field_clip_label_prototypes = {}
+        self.field_shape_group_by_label = {}
+        self.field_shape_label_prototypes = {}
         self.samples = {}
         self.sample_features = {}
         self.feature_counts = {}
@@ -473,10 +548,15 @@ class PrototypeModel:
         self._apply_confusion_filtered_deep_prototypes()
         self._mark_confusion_risk_samples()
         self._build_local_evidence_indexes()
+        self._build_reference_icon_index()
         self._build_sub_prototypes(self.prototypes.keys())
         self._build_text_prototypes(self.prototypes.keys())
         self._build_pairwise_similarities()
         self._build_hierarchy_index()
+        self._build_taxonomy_index()
+        self._build_fine_grained_index()
+        self._build_field_clip_index()
+        self._build_field_shape_index()
         self._build_training_quality_report()
         return self
 
@@ -534,11 +614,63 @@ class PrototypeModel:
         self._refresh_label_robust_deep_prototype(label)
         self._mark_confusion_risk_samples()
         self._build_local_evidence_indexes()
+        self._build_reference_icon_index()
         self._build_sub_prototypes(self.prototypes.keys())
         self._build_text_prototypes([label])
         self._build_pairwise_similarities()
         self._build_hierarchy_index()
+        self._build_taxonomy_index()
+        self._build_fine_grained_index()
+        self._build_field_clip_index()
+        self._build_field_shape_index()
         self._build_training_quality_report()
+
+    def precache_deep_features(self, samples=None, labels=None, include_crops=True, include_text=True):
+        """Warm CLIP image/crop/text caches before latency-sensitive or online runs."""
+        summary = {
+            'enabled': bool(self.deep_adapter.is_enabled()),
+            'image_paths_seen': 0,
+            'crop_paths_seen': 0,
+            'training_crop_rows_filled': 0,
+            'text_labels_seen': 0,
+        }
+        if not self.deep_adapter.is_enabled():
+            return summary
+
+        seen_paths = set()
+        for rows in self.sample_features.values():
+            for item in rows or []:
+                path = item.get('path')
+                if path:
+                    seen_paths.add(str(path))
+        for sample in samples or []:
+            path = sample.get('path') if isinstance(sample, dict) else sample
+            if path:
+                seen_paths.add(str(path))
+
+        for path in sorted(seen_paths):
+            self.deep_adapter.extract_path(path)
+            summary['image_paths_seen'] += 1
+            if include_crops and self.deep_adapter.multi_crop_enabled:
+                self.deep_adapter.extract_multi_crop_path(path)
+                summary['crop_paths_seen'] += 1
+
+        if include_crops and self.deep_adapter.multi_crop_enabled:
+            for rows in self.sample_features.values():
+                for item in rows or []:
+                    path = item.get('path')
+                    if path and not item.get('crop_embeddings'):
+                        item['crop_embeddings'] = self.deep_adapter.extract_multi_crop_path(path)
+                        if item.get('crop_embeddings'):
+                            summary['training_crop_rows_filled'] += 1
+            self._build_field_clip_index()
+
+        if include_text:
+            label_list = list(labels or self.prototypes.keys())
+            summary['text_labels_seen'] = len(label_list)
+            self._build_text_prototypes(label_list)
+
+        return summary
 
     def _feature_similarity(self, name, a, b):
         if name == 'color':
@@ -575,6 +707,10 @@ class PrototypeModel:
             return _vector_similarity(a, b, scale=5.0)
         if name == 'sign_symbol':
             return _vector_similarity(a, b, scale=5.4)
+        if name == 'traffic_template':
+            return _vector_similarity(a, b, scale=4.6)
+        if name == 'traffic_field':
+            return _vector_similarity(a, b, scale=5.8)
         if name == self.deep_feature_name or name == DEFAULT_DEEP_FEATURE_NAME:
             return _cosine_similarity(a, b)
         return _vector_similarity(a, b, scale=2.5)
@@ -1025,6 +1161,627 @@ class PrototypeModel:
                 if values
             }
 
+    def _build_taxonomy_index(self):
+        self.taxonomy_label_paths = {}
+        self.taxonomy_node_prototypes = {}
+        self.taxonomy_node_counts = {}
+        if not self.taxonomy_enabled:
+            return
+
+        grouped = {}
+        for label in sorted(self.prototypes.keys()):
+            path = self.taxonomy_spec.path_for_label(label)
+            if not path:
+                continue
+            self.taxonomy_label_paths[label] = path
+            for item in self.sample_features.get(label, []):
+                features = item.get('features') or {}
+                for node in path:
+                    node_group = grouped.setdefault(node, {})
+                    for name in list(self.feature_names) + list(self.system_feature_names):
+                        if name in features and features[name] is not None:
+                            node_group.setdefault(name, []).append(features[name])
+
+        for node, feature_rows in grouped.items():
+            self.taxonomy_node_prototypes[node] = {
+                name: _mean_vectors(values)
+                for name, values in feature_rows.items()
+                if values
+            }
+            self.taxonomy_node_counts[node] = {
+                name: len(values)
+                for name, values in feature_rows.items()
+                if values
+            }
+
+    def _taxonomy_score(self, label, feats, weights):
+        path = self.taxonomy_label_paths.get(label) or self.taxonomy_spec.path_for_label(label)
+        evidence = []
+        weighted_sum = 0.0
+        total_weight = 0.0
+        for idx, node in enumerate(path):
+            proto = self.taxonomy_node_prototypes.get(node)
+            if not proto:
+                continue
+            score, detail = self._weighted_feature_score(feats, proto, weights)
+            if not detail:
+                continue
+            level_weight = self.taxonomy_spec.weight_for_level(idx, node)
+            if level_weight <= 0.0:
+                continue
+            weighted_sum += level_weight * float(score)
+            total_weight += level_weight
+            evidence.append({
+                'level': self.taxonomy_spec.level_name(idx),
+                'node': node,
+                'score': float(score),
+                'weight': float(level_weight),
+                'feature_count': len(detail),
+            })
+        if total_weight <= 0.0:
+            return None, path, evidence
+        return float(weighted_sum / total_weight), path, evidence
+
+    def _build_reference_icon_index(self):
+        self.reference_icon_features = {}
+        if not self.reference_icon_enabled:
+            return
+        for label, rows in self.sample_features.items():
+            for item in rows or []:
+                path = str(item.get('path') or '').replace('\\', '/').split('/')[-1].lower()
+                if path.startswith('meta_'):
+                    self.reference_icon_features.setdefault(label, []).append(item.get('features') or {})
+
+    def _reference_icon_score(self, label, feats, weights):
+        refs = self.reference_icon_features.get(label) or []
+        if not refs:
+            return None
+        scores = []
+        for ref in refs:
+            parts = []
+            qv = feats.get(self.deep_feature_name)
+            rv = ref.get(self.deep_feature_name)
+            if qv is not None and rv is not None:
+                parts.append(0.65 * _cosine_similarity(qv, rv))
+            weighted, detail = self._weighted_feature_score(feats, ref, weights)
+            if detail:
+                parts.append(0.35 * float(weighted))
+            if parts:
+                scores.append(float(sum(parts)))
+        if not scores:
+            return None
+        return float(max(scores))
+
+    def _fine_grained_group_key_for_path(self, path):
+        if not path:
+            return None
+        level_names = list(self.taxonomy_spec.level_names or [])
+        if self.fine_grained_group_level in level_names:
+            idx = level_names.index(self.fine_grained_group_level)
+            prefix_len = idx + 1
+        else:
+            try:
+                prefix_len = int(self.fine_grained_group_level)
+            except (TypeError, ValueError):
+                prefix_len = max(1, len(path) - 1)
+        if len(path) < prefix_len:
+            return None
+        return tuple(path[:prefix_len])
+
+    def _build_fine_grained_index(self):
+        self.fine_grained_group_by_label = {}
+        self.fine_grained_group_prototypes = {}
+        if not self.fine_grained_enabled or not self.taxonomy_enabled:
+            return
+        groups = {}
+        for label in sorted(self.prototypes.keys()):
+            path = self.taxonomy_label_paths.get(label) or self.taxonomy_spec.path_for_label(label)
+            key = self._fine_grained_group_key_for_path(path)
+            if key is None:
+                continue
+            groups.setdefault(key, []).append(label)
+        for key, labels in groups.items():
+            if len(labels) < self.fine_grained_min_group_size:
+                continue
+            vectors = []
+            for label in labels:
+                vec = self.prototypes.get(label, {}).get(self.deep_feature_name)
+                if vec is not None:
+                    vectors.append(vec)
+            if len(vectors) < self.fine_grained_min_group_size:
+                continue
+            self.fine_grained_group_prototypes[key] = _l2_normalize(_mean_vectors(vectors))
+            for label in labels:
+                self.fine_grained_group_by_label[label] = key
+
+    def _fine_grained_score(self, label, feats):
+        key = self.fine_grained_group_by_label.get(label)
+        group_vec = self.fine_grained_group_prototypes.get(key)
+        label_vec = self.prototypes.get(label, {}).get(self.deep_feature_name)
+        query_vec = feats.get(self.deep_feature_name)
+        if key is None or group_vec is None or label_vec is None or query_vec is None:
+            return None, key
+        label_delta = _l2_normalize(np.asarray(label_vec, dtype=np.float32) - group_vec)
+        query_delta = _l2_normalize(np.asarray(query_vec, dtype=np.float32) - group_vec)
+        if not label_delta.size or not query_delta.size:
+            return None, key
+        contrast_score = _cosine_similarity(query_delta, label_delta)
+        leaf_score = _cosine_similarity(query_vec, label_vec)
+        return float(0.72 * contrast_score + 0.28 * leaf_score), key
+
+    def _apply_fine_grained_rerank(self, rows, feats):
+        for row in rows:
+            row['fine_grained_score'] = None
+            row['fine_grained_score_weight_used'] = 0.0
+            row['fine_grained_gate_reason'] = 'disabled' if not self.fine_grained_enabled else 'not_candidate'
+            row['fine_grained_group'] = None
+        if not self.fine_grained_enabled or len(rows) < 2:
+            return
+        ranked = sorted(rows, key=lambda item: float(item['score']), reverse=True)
+        top = ranked[:min(len(ranked), self.fine_grained_candidate_count)]
+        score_margin = float(ranked[0]['score']) - float(ranked[1]['score'])
+        if score_margin > self.fine_grained_max_score_margin:
+            for row in top:
+                row['fine_grained_gate_reason'] = 'score_margin_too_large'
+            return
+        scored = []
+        for row in top:
+            score, key = self._fine_grained_score(row.get('label'), feats)
+            row['fine_grained_group'] = None if key is None else '/'.join(key)
+            row['fine_grained_score'] = score
+            if score is None:
+                row['fine_grained_gate_reason'] = 'missing_fine_grained_evidence'
+                continue
+            row['fine_grained_gate_reason'] = 'scored'
+            scored.append(row)
+        group_counts = {}
+        for row in scored:
+            group = row.get('fine_grained_group')
+            group_counts[group] = group_counts.get(group, 0) + 1
+        for row in scored:
+            group = row.get('fine_grained_group')
+            if group_counts.get(group, 0) < 2:
+                row['fine_grained_gate_reason'] = 'no_sibling_competition'
+                continue
+            row['fine_grained_score_weight_used'] = self.fine_grained_score_weight
+            row['fine_grained_gate_reason'] = 'applied'
+            row['score'] = (
+                (1.0 - self.fine_grained_score_weight) * float(row['score'])
+                + self.fine_grained_score_weight * float(row['fine_grained_score'])
+            )
+
+    def _field_clip_group_key_for_path(self, path):
+        if not path:
+            return None
+        level_names = list(self.taxonomy_spec.level_names or [])
+        if self.field_clip_group_level in level_names:
+            prefix_len = level_names.index(self.field_clip_group_level) + 1
+        else:
+            try:
+                prefix_len = int(self.field_clip_group_level)
+            except (TypeError, ValueError):
+                prefix_len = max(1, len(path) - 2)
+        if len(path) < prefix_len:
+            return None
+        return tuple(path[:prefix_len])
+
+    def _build_field_clip_index(self):
+        self.field_clip_group_by_label = {}
+        self.field_clip_label_prototypes = {}
+        if not self.field_clip_enabled or not self.taxonomy_enabled:
+            return
+        groups = {}
+        for label in sorted(self.prototypes.keys()):
+            path = self.taxonomy_label_paths.get(label) or self.taxonomy_spec.path_for_label(label)
+            key = self._field_clip_group_key_for_path(path)
+            if key is None:
+                continue
+            groups.setdefault(key, []).append(label)
+        valid_groups = {key for key, labels in groups.items() if len(labels) >= self.field_clip_min_group_size}
+        for key, labels in groups.items():
+            if key not in valid_groups:
+                continue
+            for label in labels:
+                self.field_clip_group_by_label[label] = key
+                by_crop = {}
+                for item in self.sample_features.get(label, []):
+                    path = item.get('path')
+                    if path and not item.get('crop_embeddings'):
+                        try:
+                            item['crop_embeddings'] = self._extract_crop_embeddings_for_path(path)
+                        except Exception:
+                            item['crop_embeddings'] = []
+                    for crop_id, crop_vec in self._crop_rows_for_scoring(item.get('crop_embeddings') or []):
+                        if crop_id in self.field_clip_crop_ids:
+                            by_crop.setdefault(crop_id, []).append(crop_vec)
+                prototypes = {
+                    crop_id: _l2_normalize(_mean_vectors(vectors))
+                    for crop_id, vectors in by_crop.items()
+                    if vectors
+                }
+                if prototypes:
+                    self.field_clip_label_prototypes[label] = prototypes
+
+    def _field_clip_score(self, label, query_crops):
+        key = self.field_clip_group_by_label.get(label)
+        prototypes = self.field_clip_label_prototypes.get(label) or {}
+        if key is None or not prototypes:
+            return None, key
+        scores = []
+        query_by_id = {
+            crop_id: crop_vec
+            for crop_id, crop_vec in self._crop_rows_for_scoring(query_crops)
+            if crop_id in self.field_clip_crop_ids
+        }
+        for crop_id, proto_vec in prototypes.items():
+            query_vec = query_by_id.get(crop_id)
+            if query_vec is not None:
+                scores.append(_cosine_similarity(query_vec, proto_vec))
+        if not scores:
+            return None, key
+        return float(max(scores) if len(scores) == 1 else 0.65 * max(scores) + 0.35 * float(np.mean(scores))), key
+
+    def _apply_field_clip_rerank(self, rows, image_path):
+        for row in rows:
+            row['field_clip_score'] = None
+            row['field_clip_score_weight_used'] = 0.0
+            row['field_clip_gate_reason'] = 'disabled' if not self.field_clip_enabled else 'not_candidate'
+            row['field_clip_group'] = None
+        if not self.field_clip_enabled or len(rows) < 2:
+            return
+        ranked = sorted(rows, key=lambda item: float(item['score']), reverse=True)
+        top = ranked[:min(len(ranked), self.field_clip_candidate_count)]
+        score_margin = float(ranked[0]['score']) - float(ranked[1]['score'])
+        if score_margin > self.field_clip_max_score_margin:
+            for row in top:
+                row['field_clip_gate_reason'] = 'score_margin_too_large'
+            return
+        query_crops = self._extract_crop_embeddings_for_path(image_path)
+        if not query_crops:
+            for row in top:
+                row['field_clip_gate_reason'] = 'missing_query_crops'
+            return
+        scored = []
+        for row in top:
+            score, key = self._field_clip_score(row.get('label'), query_crops)
+            row['field_clip_group'] = None if key is None else '/'.join(key)
+            row['field_clip_score'] = score
+            if score is None:
+                row['field_clip_gate_reason'] = 'missing_field_clip_evidence'
+                continue
+            row['field_clip_gate_reason'] = 'scored'
+            scored.append(row)
+        anchor_group = top[0].get('field_clip_group')
+        anchor_count = sum(1 for row in scored if row.get('field_clip_group') == anchor_group)
+        for row in scored:
+            group = row.get('field_clip_group')
+            if not anchor_group or group != anchor_group:
+                row['field_clip_gate_reason'] = 'different_sibling_group'
+                continue
+            if anchor_count < 2:
+                row['field_clip_gate_reason'] = 'no_sibling_competition'
+                continue
+            row['field_clip_score_weight_used'] = self.field_clip_score_weight
+            row['field_clip_gate_reason'] = 'applied'
+            row['score'] = (
+                (1.0 - self.field_clip_score_weight) * float(row['score'])
+                + self.field_clip_score_weight * float(row['field_clip_score'])
+            )
+
+    def _field_shape_group_key_for_path(self, path):
+        if not path:
+            return None
+        level_names = list(self.taxonomy_spec.level_names or [])
+        if self.field_shape_group_level in level_names:
+            prefix_len = level_names.index(self.field_shape_group_level) + 1
+        else:
+            try:
+                prefix_len = int(self.field_shape_group_level)
+            except (TypeError, ValueError):
+                prefix_len = min(5, len(path))
+        return tuple(path[:max(1, min(prefix_len, len(path)))])
+
+    def _build_field_shape_index(self):
+        self.field_shape_group_by_label = {}
+        self.field_shape_label_prototypes = {}
+        if not self.field_shape_enabled or not self.taxonomy_enabled:
+            return
+        groups = {}
+        for label, path in self.taxonomy_label_paths.items():
+            key = self._field_shape_group_key_for_path(path)
+            if key is not None:
+                groups.setdefault(key, set()).add(label)
+        valid_groups = {key for key, labels in groups.items() if len(labels) >= self.field_shape_min_group_size}
+        if not valid_groups:
+            return
+        for label, path in self.taxonomy_label_paths.items():
+            key = self._field_shape_group_key_for_path(path)
+            if key not in valid_groups:
+                continue
+            vectors = []
+            for item in self.sample_features.get(label, []):
+                sample_path = item.get('path')
+                if not sample_path:
+                    continue
+                try:
+                    vec = extract_field_shape_descriptor(sample_path)
+                except Exception:
+                    vec = None
+                if vec is not None:
+                    vectors.append(vec)
+            if vectors:
+                self.field_shape_group_by_label[label] = key
+                self.field_shape_label_prototypes[label] = _l2_normalize(_mean_vectors(vectors))
+
+    def _field_shape_score(self, label, query_vec):
+        key = self.field_shape_group_by_label.get(label)
+        proto = self.field_shape_label_prototypes.get(label)
+        if key is None or proto is None or query_vec is None:
+            return None, key
+        return float(_cosine_similarity(query_vec, proto)), key
+
+    def _apply_field_shape_rerank(self, rows, image_path):
+        for row in rows:
+            row['field_shape_score'] = None
+            row['field_shape_score_weight_used'] = 0.0
+            row['field_shape_gate_reason'] = 'disabled' if not self.field_shape_enabled else 'not_candidate'
+            row['field_shape_group'] = None
+        if not self.field_shape_enabled or len(rows) < 2:
+            return
+        ranked = sorted(rows, key=lambda item: float(item['score']), reverse=True)
+        top = ranked[:min(len(ranked), self.field_shape_candidate_count)]
+        score_margin = float(ranked[0]['score']) - float(ranked[1]['score'])
+        if score_margin > self.field_shape_max_score_margin:
+            for row in top:
+                row['field_shape_gate_reason'] = 'score_margin_too_large'
+            return
+        try:
+            query_vec = extract_field_shape_descriptor(image_path)
+        except Exception:
+            query_vec = None
+        if query_vec is None:
+            for row in top:
+                row['field_shape_gate_reason'] = 'missing_query_descriptor'
+            return
+        scored = []
+        for row in top:
+            score, key = self._field_shape_score(row.get('label'), query_vec)
+            row['field_shape_group'] = None if key is None else '/'.join(key)
+            row['field_shape_score'] = score
+            if score is None:
+                row['field_shape_gate_reason'] = 'missing_field_shape_evidence'
+                continue
+            row['field_shape_gate_reason'] = 'scored'
+            scored.append(row)
+        anchor_group = top[0].get('field_shape_group')
+        anchor_count = sum(1 for row in scored if row.get('field_shape_group') == anchor_group)
+        for row in scored:
+            group = row.get('field_shape_group')
+            if not anchor_group or group != anchor_group:
+                row['field_shape_gate_reason'] = 'different_sibling_group'
+                continue
+            if anchor_count < 2:
+                row['field_shape_gate_reason'] = 'no_sibling_competition'
+                continue
+            row['field_shape_score_weight_used'] = self.field_shape_score_weight
+            row['field_shape_gate_reason'] = 'applied'
+            row['score'] = (
+                (1.0 - self.field_shape_score_weight) * float(row['score'])
+                + self.field_shape_score_weight * float(row['field_shape_score'])
+            )
+
+    def _taxonomy_prefix_for_level(self, path, level_name):
+        if not path:
+            return None
+        level_names = list(self.taxonomy_spec.level_names or [])
+        if level_name in level_names:
+            prefix_len = level_names.index(level_name) + 1
+        else:
+            try:
+                prefix_len = int(level_name)
+            except (TypeError, ValueError):
+                prefix_len = min(5, len(path))
+        return tuple(path[:max(1, min(prefix_len, len(path)))])
+
+    def _local_leaf_score(self, row, feats, weights, query_crops):
+        evidence = {}
+        weighted_sum = 0.0
+        total_weight = 0.0
+
+        prototype_score = row.get('prototype_score')
+        if prototype_score is not None:
+            evidence['prototype_score'] = float(prototype_score)
+            w = self.local_leaf_component_weights.get('prototype_score', 0.0)
+            weighted_sum += w * float(prototype_score)
+            total_weight += w
+
+        knn_score, nearest = self._nearest_samples(row.get('label'), feats, weights)
+        if knn_score is not None:
+            row['local_leaf_nearest_samples'] = nearest
+            evidence['knn_score'] = float(knn_score)
+            w = self.local_leaf_component_weights.get('knn_score', 0.0)
+            weighted_sum += w * float(knn_score)
+            total_weight += w
+
+        if self.local_leaf_use_crop and query_crops:
+            crop_score = self._crop_local_score(row.get('label'), query_crops, allowed_crop_ids=self.local_leaf_crop_ids)
+            if crop_score is not None:
+                evidence['field_crop_score'] = float(crop_score)
+                w = self.local_leaf_component_weights.get('field_crop_score', self.local_leaf_component_weights.get('crop_score', 0.0))
+                weighted_sum += w * float(crop_score)
+                total_weight += w
+
+        if self.local_leaf_use_field_clip and query_crops:
+            field_clip_score, _ = self._field_clip_score(row.get('label'), query_crops)
+            if field_clip_score is not None:
+                evidence['field_clip_score'] = float(field_clip_score)
+                w = self.local_leaf_component_weights.get('field_clip_score', 0.0)
+                weighted_sum += w * float(field_clip_score)
+                total_weight += w
+
+        if total_weight <= 0.0:
+            return None, evidence
+        return float(weighted_sum / total_weight), evidence
+
+    def _apply_local_leaf_rerank(self, rows, feats, weights, image_path):
+        for row in rows:
+            row['local_leaf_score'] = None
+            row['local_leaf_score_weight_used'] = 0.0
+            row['local_leaf_gate_reason'] = 'disabled' if not self.local_leaf_enabled else 'not_candidate'
+            row['local_leaf_group'] = None
+            row['local_leaf_evidence'] = {}
+        if not self.local_leaf_enabled or not self.taxonomy_enabled or len(rows) < 2:
+            return
+
+        rows_by_label = {row.get('label'): row for row in rows}
+        ranked = sorted(rows, key=lambda item: float(item['score']), reverse=True)
+        top = ranked[0]
+        top_path = top.get('taxonomy_path') or self.taxonomy_label_paths.get(top.get('label')) or []
+        anchor_group = self._taxonomy_prefix_for_level(top_path, self.local_leaf_parent_level)
+        if not anchor_group:
+            top['local_leaf_gate_reason'] = 'missing_anchor_group'
+            return
+
+        sibling_labels = []
+        for label, path in self.taxonomy_label_paths.items():
+            if self._taxonomy_prefix_for_level(path, self.local_leaf_parent_level) == anchor_group:
+                sibling_labels.append(label)
+        sibling_labels = sorted(set(sibling_labels))
+        if len(sibling_labels) < self.local_leaf_min_group_size:
+            for label in sibling_labels:
+                row = rows_by_label.get(label)
+                if row is not None:
+                    row['local_leaf_gate_reason'] = 'small_sibling_group'
+                    row['local_leaf_group'] = '/'.join(anchor_group)
+            return
+
+        outside_scores = [
+            float(row['score'])
+            for row in rows
+            if row.get('label') not in sibling_labels
+        ]
+        outside_best = max(outside_scores) if outside_scores else None
+        parent_margin = float(top['score']) - float(outside_best) if outside_best is not None else 1.0
+        score_margin = float(ranked[0]['score']) - float(ranked[1]['score'])
+        if parent_margin < self.local_leaf_min_parent_margin:
+            for label in sibling_labels:
+                row = rows_by_label.get(label)
+                if row is not None:
+                    row['local_leaf_gate_reason'] = 'weak_parent_margin'
+                    row['local_leaf_group'] = '/'.join(anchor_group)
+            return
+        if score_margin > self.local_leaf_max_parent_margin:
+            for label in sibling_labels:
+                row = rows_by_label.get(label)
+                if row is not None:
+                    row['local_leaf_gate_reason'] = 'score_margin_too_large'
+                    row['local_leaf_group'] = '/'.join(anchor_group)
+            return
+
+        query_crops = []
+        if self.local_leaf_use_crop or self.local_leaf_use_field_clip:
+            try:
+                query_crops = self._extract_crop_embeddings_for_path(image_path)
+            except Exception:
+                query_crops = []
+
+        scored = []
+        for label in sibling_labels:
+            row = rows_by_label.get(label)
+            if row is None:
+                continue
+            row['local_leaf_group'] = '/'.join(anchor_group)
+            score, evidence = self._local_leaf_score(row, feats, weights, query_crops)
+            row['local_leaf_score'] = score
+            row['local_leaf_evidence'] = evidence
+            if score is None:
+                row['local_leaf_gate_reason'] = 'missing_local_leaf_evidence'
+                continue
+            row['local_leaf_gate_reason'] = 'scored'
+            scored.append(row)
+
+        if len(scored) < 2:
+            for row in scored:
+                row['local_leaf_gate_reason'] = 'insufficient_local_leaf_evidence'
+            return
+        local_ranked = sorted(scored, key=lambda item: float(item['local_leaf_score']), reverse=True)
+        local_gap = float(local_ranked[0]['local_leaf_score']) - float(local_ranked[1]['local_leaf_score'])
+        if local_gap < self.local_leaf_min_local_gap:
+            for row in scored:
+                row['local_leaf_gate_reason'] = 'weak_local_leaf_gap'
+            return
+
+        for row in scored:
+            row['local_leaf_score_weight_used'] = self.local_leaf_score_weight
+            row['local_leaf_gate_reason'] = 'applied'
+            row['score'] = (
+                (1.0 - self.local_leaf_score_weight) * float(row['score'])
+                + self.local_leaf_score_weight * float(row['local_leaf_score'])
+            )
+
+    def _apply_reference_icon_rerank(self, rows, feats, weights):
+        for row in rows:
+            row['reference_icon_score'] = None
+            row['reference_icon_score_weight_used'] = 0.0
+            row['reference_icon_gate_reason'] = 'disabled' if not self.reference_icon_enabled else 'missing_reference_icon'
+        if not self.reference_icon_enabled or len(rows) < 2:
+            return
+        ranked = sorted(rows, key=lambda item: float(item['score']), reverse=True)
+        score_margin = float(ranked[0]['score']) - float(ranked[1]['score'])
+        if score_margin > self.reference_icon_max_score_margin:
+            for row in rows:
+                row['reference_icon_gate_reason'] = 'score_margin_too_large'
+            return
+        for row in rows:
+            score = self._reference_icon_score(row.get('label'), feats, weights)
+            row['reference_icon_score'] = score
+            if score is None:
+                continue
+            row['reference_icon_score_weight_used'] = self.reference_icon_score_weight
+            row['reference_icon_gate_reason'] = 'applied'
+            if self.reference_icon_score_weight > 0.0:
+                row['score'] = (
+                    (1.0 - self.reference_icon_score_weight) * float(row['score'])
+                    + self.reference_icon_score_weight * float(score)
+                )
+
+    def _apply_taxonomy_rerank(self, rows, feats, weights):
+        for row in rows:
+            score, path, evidence = self._taxonomy_score(row.get('label'), feats, weights)
+            row['taxonomy_path'] = path
+            row['taxonomy_score'] = score
+            row['taxonomy_evidence'] = evidence
+            row['taxonomy_score_weight_used'] = 0.0
+            row['taxonomy_gate_reason'] = 'disabled' if not self.taxonomy_enabled else 'not_applied'
+        if not self.taxonomy_enabled or len(rows) < 2:
+            return
+
+        scored = [row for row in rows if row.get('taxonomy_score') is not None]
+        if len(scored) < 2:
+            for row in scored:
+                row['taxonomy_gate_reason'] = 'insufficient_taxonomy_evidence'
+            return
+        ranked = sorted(rows, key=lambda item: float(item['score']), reverse=True)
+        taxonomy_ranked = sorted(scored, key=lambda item: float(item['taxonomy_score']), reverse=True)
+        score_margin = float(ranked[0]['score']) - float(ranked[1]['score'])
+        taxonomy_gap = float(taxonomy_ranked[0]['taxonomy_score']) - float(taxonomy_ranked[1]['taxonomy_score'])
+        if score_margin > self.taxonomy_spec.max_score_margin:
+            for row in scored:
+                row['taxonomy_gate_reason'] = 'score_margin_too_large'
+            return
+        if taxonomy_gap < self.taxonomy_spec.min_gap:
+            for row in scored:
+                row['taxonomy_gate_reason'] = 'weak_taxonomy_gap'
+            return
+        for row in scored:
+            row['taxonomy_score_weight_used'] = self.taxonomy_score_weight
+            row['taxonomy_gate_reason'] = 'applied' if self.taxonomy_spec.apply_to_score else 'reported_only'
+            if self.taxonomy_spec.apply_to_score and self.taxonomy_score_weight > 0.0:
+                row['score'] = (
+                    (1.0 - self.taxonomy_score_weight) * float(row['score'])
+                    + self.taxonomy_score_weight * float(row['taxonomy_score'])
+                )
+
     def _hierarchy_group_key(self, item):
         return (str(item.get('level')), str(item.get('key')))
 
@@ -1238,8 +1995,13 @@ class PrototypeModel:
                 rows.append((crop_id, vec))
         return rows
 
-    def _crop_local_score(self, label, query_crops):
-        query_rows = self._crop_rows_for_scoring(query_crops)
+    def _crop_local_score(self, label, query_crops, allowed_crop_ids=None):
+        allowed = None if allowed_crop_ids is None else {str(item) for item in allowed_crop_ids}
+        query_rows = [
+            (crop_id, crop_vec)
+            for crop_id, crop_vec in self._crop_rows_for_scoring(query_crops)
+            if allowed is None or crop_id in allowed
+        ]
         if not query_rows:
             return None
         self._ensure_crop_index_for_label(label)
@@ -1256,7 +2018,11 @@ class PrototypeModel:
                     if group:
                         groups.append(group)
                 else:
-                    groups.extend(crop_index.values())
+                    groups.extend(
+                        group
+                        for crop_id, group in crop_index.items()
+                        if allowed is None or str(crop_id) in allowed
+                    )
                 for group in groups:
                     matrix = group.get('matrix')
                     if matrix is None or matrix.size == 0 or matrix.shape[1] != query.size:
@@ -1270,7 +2036,11 @@ class PrototypeModel:
             return float(0.70 * top[0] + 0.30 * np.mean(top))
         candidate_scores = []
         for item in self._local_evidence_items(label):
-            sample_rows = self._crop_rows_for_scoring(item.get('crop_embeddings') or [])
+            sample_rows = [
+                (crop_id, crop_vec)
+                for crop_id, crop_vec in self._crop_rows_for_scoring(item.get('crop_embeddings') or [])
+                if allowed is None or crop_id in allowed
+            ]
             for query_id, query_vec in query_rows:
                 for sample_id, sample_vec in sample_rows:
                     if self.crop_rerank_match_same_crop_id and query_id != sample_id:
@@ -1850,6 +2620,12 @@ class PrototypeModel:
         self._apply_pair_confusion_rerank(rows, feats)
         self._apply_text_tiebreak_rerank(rows)
         self._apply_hierarchy_rerank(rows, feats, weights)
+        self._apply_reference_icon_rerank(rows, feats, weights)
+        self._apply_taxonomy_rerank(rows, feats, weights)
+        self._apply_local_leaf_rerank(rows, feats, weights, image_path)
+        self._apply_field_shape_rerank(rows, image_path)
+        self._apply_field_clip_rerank(rows, image_path)
+        self._apply_fine_grained_rerank(rows, feats)
         results = rows
         results.sort(key=lambda x: x['score'], reverse=True)
         return results
@@ -1977,7 +2753,25 @@ class PrototypeModel:
         if not model.training_confusion_pairs and model.sample_features:
             model._mark_confusion_risk_samples()
         model._build_local_evidence_indexes()
+        model._build_reference_icon_index()
         model._build_hierarchy_index()
+        model.taxonomy_label_paths = {
+            str(label): [str(node) for node in path]
+            for label, path in (data.get('taxonomy_label_paths') or {}).items()
+        }
+        model.taxonomy_node_prototypes = {
+            str(node): cls._import_feature_dict(features)
+            for node, features in (data.get('taxonomy_node_prototypes') or {}).items()
+        }
+        model.taxonomy_node_counts = {
+            str(node): {str(name): int(count) for name, count in counts.items()}
+            for node, counts in (data.get('taxonomy_node_counts') or {}).items()
+        }
+        if model.taxonomy_enabled and not model.taxonomy_node_prototypes:
+            model._build_taxonomy_index()
+        model._build_fine_grained_index()
+        model._build_field_clip_index()
+        model._build_field_shape_index()
         return model
 
     def export(self, include_sample_features=True):
@@ -2003,6 +2797,7 @@ class PrototypeModel:
                 'score_weight': self.concept_score_weight,
             },
             'similarity_config': {
+                'recognition_mode': self.recognition_mode,
                 'knn': {
                     'enable': self.knn_enabled,
                     'k': self.knn_k,
@@ -2076,6 +2871,50 @@ class PrototypeModel:
                     'min_gap': self.hierarchy_min_gap,
                     'level_weights': self.hierarchy_level_weights,
                 },
+                'taxonomy': self.taxonomy_spec.export(),
+                'reference_icon_rerank': {
+                    'enable': self.reference_icon_enabled,
+                    'score_weight': self.reference_icon_score_weight,
+                    'max_score_margin': self.reference_icon_max_score_margin,
+                },
+                'fine_grained_rerank': {
+                    'enable': self.fine_grained_enabled,
+                    'score_weight': self.fine_grained_score_weight,
+                    'max_candidate_classes': self.fine_grained_candidate_count,
+                    'max_score_margin': self.fine_grained_max_score_margin,
+                    'group_level': self.fine_grained_group_level,
+                    'min_group_size': self.fine_grained_min_group_size,
+                },
+                'field_clip_rerank': {
+                    'enable': self.field_clip_enabled,
+                    'score_weight': self.field_clip_score_weight,
+                    'max_candidate_classes': self.field_clip_candidate_count,
+                    'max_score_margin': self.field_clip_max_score_margin,
+                    'group_level': self.field_clip_group_level,
+                    'min_group_size': self.field_clip_min_group_size,
+                    'crop_ids': sorted(self.field_clip_crop_ids),
+                },
+                'field_shape_rerank': {
+                    'enable': self.field_shape_enabled,
+                    'score_weight': self.field_shape_score_weight,
+                    'max_candidate_classes': self.field_shape_candidate_count,
+                    'max_score_margin': self.field_shape_max_score_margin,
+                    'group_level': self.field_shape_group_level,
+                    'min_group_size': self.field_shape_min_group_size,
+                },
+                'local_leaf_rerank': {
+                    'enable': self.local_leaf_enabled,
+                    'score_weight': self.local_leaf_score_weight,
+                    'parent_level': self.local_leaf_parent_level,
+                    'min_group_size': self.local_leaf_min_group_size,
+                    'min_parent_margin': self.local_leaf_min_parent_margin,
+                    'max_parent_score_margin': self.local_leaf_max_parent_margin,
+                    'min_local_gap': self.local_leaf_min_local_gap,
+                    'use_crop': self.local_leaf_use_crop,
+                    'use_field_clip': self.local_leaf_use_field_clip,
+                    'crop_ids': sorted(self.local_leaf_crop_ids),
+                    'component_weights': self.local_leaf_component_weights,
+                },
                 'robust_prototype': {
                     'enable': self.robust_enabled,
                     'deep_only': self.robust_deep_only,
@@ -2120,6 +2959,15 @@ class PrototypeModel:
                 '|||'.join(key): float(value)
                 for key, value in self.pairwise_similarities.items()
             },
+            'taxonomy_label_paths': {
+                label: list(path)
+                for label, path in self.taxonomy_label_paths.items()
+            },
+            'taxonomy_node_prototypes': {
+                node: self._export_feature_dict(features)
+                for node, features in self.taxonomy_node_prototypes.items()
+            },
+            'taxonomy_node_counts': self.taxonomy_node_counts,
             'sample_index': {
                 label: [str(path) for path in paths]
                 for label, paths in self.samples.items()

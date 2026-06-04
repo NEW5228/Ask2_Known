@@ -33,3 +33,19 @@ concept prototype similarity, and user feedback weights.
 
 Embedding should remain an internal scoring signal. User-facing active teaching
 questions should still focus on explainable visual concepts whenever possible.
+
+## Multilayer recognition
+
+Future versions should support tree-like, multilayer recognition instead of only
+flat leaf-class prediction. A sample can contribute evidence to parent nodes,
+subtype nodes, attribute nodes, and leaf classes at the same time.
+
+The first target use case is traffic signs:
+
+```text
+traffic_sign -> speed_limit -> number_30 -> speed_limit_30
+```
+
+This should be implemented as a soft taxonomy with top-k path candidates, not as
+a hard decision tree that permanently prunes alternatives after one uncertain
+branch decision. See `docs/multilayer_recognition.md`.

@@ -18,10 +18,17 @@ from ask2know.features.feature_config import (
 from ask2know.experience.confusion import PairVisualRuleMemory, OnlineConfusionExperience, build_confusion_experience_report
 from ask2know.inference.diagnostics import diagnose_prediction
 from ask2know.inference.prototype_model import PrototypeModel
+from ask2know.inference.taxonomy import taxonomy_level_summary
 from ask2know.learning.weights import AdaptiveWeights
+from ask2know.questions.ask_resolver import (
+    DEFAULT_ASK_CANDIDATE_TOP_K,
+    DEFAULT_ASK_MAX_OPTIONS,
+    DEFAULT_ASK_MAX_QUESTIONS,
+    summarize_ask_resolution,
+)
 from ask2know.utils.io_utils import ensure_dir, load_json, load_yaml, save_json
 
-VERSION = '0.4.63.1'
+VERSION = '0.5.0'
 
 
 def class_names(objects):
@@ -45,6 +52,31 @@ def rounded_prediction(item):
         'hierarchy_score_weight_used': round(float(item.get('hierarchy_score_weight_used', 0.0)), 6),
         'hierarchy_gate_reason': item.get('hierarchy_gate_reason'),
         'hierarchy_evidence': item.get('hierarchy_evidence', []),
+        'taxonomy_path': list(item.get('taxonomy_path') or []),
+        'taxonomy_score': None if item.get('taxonomy_score') is None else round(float(item['taxonomy_score']), 6),
+        'taxonomy_score_weight_used': round(float(item.get('taxonomy_score_weight_used', 0.0)), 6),
+        'taxonomy_gate_reason': item.get('taxonomy_gate_reason'),
+        'taxonomy_evidence': item.get('taxonomy_evidence', []),
+        'reference_icon_score': None if item.get('reference_icon_score') is None else round(float(item['reference_icon_score']), 6),
+        'reference_icon_score_weight_used': round(float(item.get('reference_icon_score_weight_used', 0.0)), 6),
+        'reference_icon_gate_reason': item.get('reference_icon_gate_reason'),
+        'field_clip_score': None if item.get('field_clip_score') is None else round(float(item['field_clip_score']), 6),
+        'field_clip_score_weight_used': round(float(item.get('field_clip_score_weight_used', 0.0)), 6),
+        'field_clip_gate_reason': item.get('field_clip_gate_reason'),
+        'field_clip_group': item.get('field_clip_group'),
+        'field_shape_score': None if item.get('field_shape_score') is None else round(float(item['field_shape_score']), 6),
+        'field_shape_score_weight_used': round(float(item.get('field_shape_score_weight_used', 0.0)), 6),
+        'field_shape_gate_reason': item.get('field_shape_gate_reason'),
+        'field_shape_group': item.get('field_shape_group'),
+        'local_leaf_score': None if item.get('local_leaf_score') is None else round(float(item['local_leaf_score']), 6),
+        'local_leaf_score_weight_used': round(float(item.get('local_leaf_score_weight_used', 0.0)), 6),
+        'local_leaf_gate_reason': item.get('local_leaf_gate_reason'),
+        'local_leaf_group': item.get('local_leaf_group'),
+        'local_leaf_evidence': item.get('local_leaf_evidence', {}),
+        'fine_grained_score': None if item.get('fine_grained_score') is None else round(float(item['fine_grained_score']), 6),
+        'fine_grained_score_weight_used': round(float(item.get('fine_grained_score_weight_used', 0.0)), 6),
+        'fine_grained_gate_reason': item.get('fine_grained_gate_reason'),
+        'fine_grained_group': item.get('fine_grained_group'),
         'pairwise_score': None if item.get('pairwise_score') is None else round(float(item['pairwise_score']), 6),
         'pairwise_score_weight_used': round(float(item.get('pairwise_score_weight_used', 0.0)), 6),
         'pairwise_gate_reason': item.get('pairwise_gate_reason'),
@@ -84,7 +116,7 @@ def main():
         description='Evaluate Ask2Know on datasets/unlabeled/<class_name>/ images.'
     )
     parser.add_argument('--config', required=True, help='Project task_config.yaml')
-    parser.add_argument('--top-k', type=int, default=3, help='Number of predictions to keep per sample.')
+    parser.add_argument('--top-k', type=int, default=DEFAULT_ASK_CANDIDATE_TOP_K, help='Number of predictions to keep per sample.')
     parser.add_argument('--output-dir', help='Override paths.output_dir without editing the task config.')
     parser.add_argument('--deep-cache-dir', help='Override CLIP feature cache directory for evaluation.')
     parser.add_argument('--enable-hierarchy', action='store_true', help='Enable hierarchical reranking for this evaluation run.')
@@ -98,6 +130,8 @@ def main():
     parser.add_argument('--profile', action='store_true', help='Print coarse timing checkpoints during evaluation.')
     parser.add_argument('--model-cache', default=None, help='Path to a fitted PrototypeModel cache. Default: output_dir/prototype_model_cache.json')
     parser.add_argument('--rebuild-model-cache', action='store_true', help='Ignore and overwrite an existing fitted model cache.')
+    parser.add_argument('--precache', action='store_true', help='Warm CLIP image, crop, and text caches before evaluation.')
+    parser.add_argument('--precache-eval', action='store_true', help='With --precache, also warm evaluation image/crop caches.')
     parser.add_argument('--online-experience', action='store_true', help='Learn from earlier revealed mistakes and rerank later low-margin confusion pairs.')
     parser.add_argument('--online-max-margin', type=float, default=0.035, help='Only apply online experience when top-2 score margin is at most this value.')
     parser.add_argument('--online-adjustment-weight', type=float, default=0.02, help='Weight for each learned pair/source signal.')
@@ -114,6 +148,10 @@ def main():
     parser.add_argument('--visual-rule-min-concept-gap', type=float, default=0.10, help='Minimum class concept gap required to learn a visual rule.')
     parser.add_argument('--visual-rule-min-match-gap', type=float, default=0.04, help='Minimum sample-to-class match gap required to apply a visual rule.')
     parser.add_argument('--visual-rule-allow-rank-flip', action='store_true', help='Allow visual rules to change the top-1 prediction.')
+    parser.add_argument('--simulate-ask-resolution', action='store_true', help='Simulate taxonomy questions using the true label as an oracle answer.')
+    parser.add_argument('--simulate-ask-questions', type=int, default=DEFAULT_ASK_MAX_QUESTIONS, help='Maximum simulated taxonomy questions per sample.')
+    parser.add_argument('--simulate-ask-options', type=int, default=DEFAULT_ASK_MAX_OPTIONS, help='Maximum options per simulated taxonomy question.')
+    parser.add_argument('--simulate-ask-candidate-top-k', type=int, default=DEFAULT_ASK_CANDIDATE_TOP_K, help='Maximum candidates used by simulated ASK resolution.')
     args = parser.parse_args()
     started_at = time.perf_counter()
     profile_path = None
@@ -247,6 +285,29 @@ def main():
         })
         profile(f'saved model cache: {model_cache_path}')
 
+    if args.precache:
+        precache_samples = eval_samples if args.precache_eval else []
+        profile(
+            'precache started: '
+            f'train={len(train_samples)}, eval={len(precache_samples)}, labels={len(labels)}'
+        )
+        precache_summary = model.precache_deep_features(
+            samples=precache_samples,
+            labels=labels,
+            include_crops=True,
+            include_text=True,
+        )
+        profile(f'precache finished: {precache_summary}')
+        ensure_dir(model_cache_path.parent)
+        save_json(model_cache_path, {
+            'schema_version': VERSION,
+            'dataset_dir': str(dataset_dir),
+            'train_sample_count': len(train_samples),
+            'model': model.export(include_sample_features=True),
+            'precache_summary': precache_summary,
+        })
+        profile(f'saved precached model cache: {model_cache_path}')
+
     online_memory = None
     visual_rule_memory = None
     if args.online_experience:
@@ -302,6 +363,7 @@ def main():
         if visual_rule_memory is not None:
             results, visual_rule_adjustment = visual_rule_memory.apply(results)
         predicted = results[0]['label'] if results else None
+        predicted_path = list(results[0].get('taxonomy_path') or []) if results else []
         true_label = sample['label']
         correct = predicted == true_label
         diagnosis = diagnose_prediction(
@@ -345,6 +407,7 @@ def main():
             'raw_predicted_label': raw_predicted,
             'after_source_predicted_label': after_source_predicted,
             'predicted_label': predicted,
+            'predicted_path': predicted_path,
             'raw_correct': raw_correct,
             'after_source_correct': after_source_correct,
             'correct': correct,
@@ -411,6 +474,17 @@ def main():
             'reason_counts': dict(sorted(reason_counts.items())),
         },
         'training_quality_report': model.training_quality_report,
+        'taxonomy_level_summary': taxonomy_level_summary(rows, cfg.get('similarity', {}).get('taxonomy', {})),
+        'ask_resolution_summary': (
+            summarize_ask_resolution(
+                rows,
+                top_k=args.top_k,
+                max_questions=args.simulate_ask_questions,
+                max_options=args.simulate_ask_options,
+                candidate_top_k=args.simulate_ask_candidate_top_k,
+            )
+            if args.simulate_ask_resolution else None
+        ),
         'confusion_experience_report': confusion_experience,
         'per_class': {
             label: {

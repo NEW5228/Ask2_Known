@@ -15,7 +15,7 @@ from ask2know.features.feature_config import (
     resolve_feature_preset,
 )
 
-VERSION = '0.4.63.1'
+VERSION = '0.5.0'
 
 
 def prompt_templates_for_preset(feature_preset):
@@ -214,7 +214,10 @@ confidence:
   saturation_ratio_threshold: 0.65
 
 question:
-  max_questions_per_sample: 1
+  max_questions_per_sample: 2
+  enable_taxonomy_ask: true
+  ask_candidate_top_k: 10
+  max_taxonomy_options: 8
   enable_question_reward: true
 
 sample_pool:
@@ -325,7 +328,7 @@ def main():
     )
 
     readme = project_root / 'README_task.md'
-    readme.write_text(f'''# {task_name}\n\n这个任务由 Ask2Know v{VERSION} 自动创建。\n\n## 放图片\n\n已确认训练样本放入：\n\n```text\n{dataset_dir / 'train'}\n```\n\n待学习未知样本放入：\n\n```text\n{dataset_dir / 'unknown'}\n```\n\n## 运行\n\n在 Ask2Know 框架目录执行：\n\n```bat\npython run_demo.py --config {config_path}\n```\n\nv{VERSION} 默认不弹图，避免 Windows 图片查看器占用文件。需要预览时：\n\n```bat\npython run_demo.py --config {config_path} --preview\n```\n''', encoding='utf-8')
+    readme.write_text(f'''# {task_name}\n\n这个任务由 Ask2Know v{VERSION} 自动创建。\n\n## 放图片\n\n已确认训练样本放入：\n\n```text\n{dataset_dir / 'train'}\n```\n\n待学习未标注样本放入：\n\n```text\n{dataset_dir / 'unlabeled'}\n```\n\n临时分析图片会保存到：\n\n```text\n{dataset_dir / 'unknown'}\n```\n\n## 运行\n\n在 Ask2Know 框架目录执行：\n\n```bat\npython run_demo.py --config {config_path}\n```\n\nv{VERSION} 默认不弹图，避免 Windows 图片查看器占用文件。需要预览时：\n\n```bat\npython run_demo.py --config {config_path} --preview\n```\n''', encoding='utf-8')
 
     print('Ask2Know task created.')
     print('Project:', project_root)
@@ -337,8 +340,8 @@ def main():
     print('1. Put known samples into:')
     for cls in args.classes:
         print(f'   {dataset_dir / "train" / cls}')
-    print('2. Put learning/unknown samples into:')
-    print(f'   {dataset_dir / "unknown"}')
+    print('2. Put unlabeled learning samples into:')
+    print(f'   {dataset_dir / "unlabeled"}')
     print('3. Run from the a2k framework folder:')
     print(f'   python run_demo.py --config {config_path}')
 

@@ -158,6 +158,14 @@ def _crop_image_specs(img, crop_names=None, center_ratio=0.86, corner_ratio=0.72
             if object_box is None:
                 object_box = _foreground_box(img)
             add('head', _head_box_from_object_box(object_box, w, h))
+        elif name in {'traffic_inner', 'sign_inner', 'field', 'symbol_field'}:
+            if object_box is None:
+                object_box = _foreground_box(img)
+            add('traffic_inner', _relative_box(object_box, 0.20, 0.20, 0.80, 0.80, w, h, pad_ratio=0.04))
+        elif name in {'traffic_symbol', 'sign_symbol_crop', 'symbol_crop'}:
+            if object_box is None:
+                object_box = _foreground_box(img)
+            add('traffic_symbol', _relative_box(object_box, 0.26, 0.24, 0.74, 0.76, w, h, pad_ratio=0.06))
         elif name in {'front', 'car_front', 'front_face'}:
             if object_box is None:
                 object_box = _foreground_box(img)
@@ -190,9 +198,9 @@ def _l2_normalize(vec):
 
 
 class DeepFeatureAdapter:
-    """Required CLIP image embedding adapter for Ask2Know v0.4.63.1.
+    """Required CLIP image embedding adapter for Ask2Know v0.5.0.
 
-    v0.4.63.1 keeps OpenCLIP as the production embedding path. OpenCV embedding from
+    v0.5.0 keeps OpenCLIP as the production embedding path. OpenCV embedding from
     v0.4.0 is kept only as private legacy code and is not an accepted provider.
     """
 
@@ -295,7 +303,7 @@ class DeepFeatureAdapter:
         if self.provider in ('clip', 'open_clip'):
             return self._try_external_provider(img, self._open_clip_embedding)
         raise ValueError(
-            f'Deep feature provider {self.provider!r} is not supported in Ask2Know v0.4.63.1. '
+            f'Deep feature provider {self.provider!r} is not supported in Ask2Know v0.5.0. '
             'Use provider: open_clip. OpenCV fallback is intentionally disabled.'
         )
 
@@ -304,7 +312,7 @@ class DeepFeatureAdapter:
             return []
         if self.provider in ('clip', 'open_clip'):
             try:
-                return self._open_clip_text_embeddings(texts)
+                return self._extract_text_vectors_cached(texts)
             except Exception as exc:
                 self._runtime_error = str(exc)
                 raise RuntimeError(
@@ -313,9 +321,30 @@ class DeepFeatureAdapter:
                     'model weights are cached or downloadable.'
                 ) from exc
         raise ValueError(
-            f'Deep feature provider {self.provider!r} is not supported in Ask2Know v0.4.63.1. '
+            f'Deep feature provider {self.provider!r} is not supported in Ask2Know v0.5.0. '
             'Use provider: open_clip.'
         )
+
+    def _extract_text_vectors_cached(self, texts):
+        prompts = [str(text) for text in texts or [] if str(text).strip()]
+        if not prompts:
+            return []
+        vectors = [None] * len(prompts)
+        missing = []
+        missing_indices = []
+        for idx, prompt in enumerate(prompts):
+            cached = self._load_text_cache(prompt)
+            if cached is not None:
+                vectors[idx] = cached
+            else:
+                missing_indices.append(idx)
+                missing.append(prompt)
+        if missing:
+            computed = self._open_clip_text_embeddings(missing)
+            for idx, prompt, vec in zip(missing_indices, missing, computed):
+                vectors[idx] = vec
+                self._save_text_cache(prompt, vec)
+        return vectors
 
     def _try_external_provider(self, img, extractor):
         try:
@@ -494,6 +523,18 @@ class DeepFeatureAdapter:
             return None
         return self.cache_dir / f'{key}.crop.json'
 
+    def _text_cache_key(self, text):
+        raw = '|'.join([
+            self._cache_fingerprint(),
+            str(text),
+        ])
+        return hashlib.sha1(raw.encode('utf-8')).hexdigest()
+
+    def _text_cache_path(self, text):
+        if not (self.cache_enabled and self.cache_dir):
+            return None
+        return self.cache_dir / f'{self._text_cache_key(text)}.text.json'
+
     def _load_cache(self, path):
         cache_path = self._cache_path(path)
         if not cache_path or not cache_path.exists():
@@ -553,6 +594,39 @@ class DeepFeatureAdapter:
                     'cache_fingerprint': self._cache_fingerprint(),
                     'crop_id': crop_id,
                     'box': list(box),
+                    'vector': np.asarray(vec, dtype=np.float32).tolist(),
+                }, f)
+        except Exception:
+            return
+
+    def _load_text_cache(self, text):
+        cache_path = self._text_cache_path(text)
+        if not cache_path or not cache_path.exists():
+            return None
+        try:
+            with open(cache_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            if data.get('provider') != self.provider or data.get('feature_name') != self.feature_name:
+                return None
+            if data.get('cache_fingerprint') != self._cache_fingerprint():
+                return None
+            if data.get('text') != str(text):
+                return None
+            return np.asarray(data.get('vector', []), dtype=np.float32)
+        except Exception:
+            return None
+
+    def _save_text_cache(self, text, vec):
+        cache_path = self._text_cache_path(text)
+        if not cache_path:
+            return
+        try:
+            with open(cache_path, 'w', encoding='utf-8') as f:
+                json.dump({
+                    'provider': self.provider,
+                    'feature_name': self.feature_name,
+                    'cache_fingerprint': self._cache_fingerprint(),
+                    'text': str(text),
                     'vector': np.asarray(vec, dtype=np.float32).tolist(),
                 }, f)
         except Exception:
