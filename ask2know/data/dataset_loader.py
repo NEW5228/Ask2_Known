@@ -54,6 +54,10 @@ class DatasetLoader:
         return samples
 
     def load_unlabeled_samples(self):
+        samples = self.load_legacy_unlabeled_flat_samples()
+        if samples:
+            return samples
+        # Backward compatibility for older projects that stored learning samples in unknown.
         return self.load_unknown_samples()
 
     def load_unknown_samples(self):

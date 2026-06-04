@@ -8,6 +8,12 @@ from ask2know.utils.io_utils import load_yaml, save_json, ensure_dir
 from ask2know.data.dataset_loader import DatasetLoader
 from ask2know.inference.prototype_model import PrototypeModel
 from ask2know.inference.uncertainty import is_globally_uncertain, top_gap, score_spread, saturated_feature_ratio
+from ask2know.questions.ask_resolver import (
+    DEFAULT_ASK_CANDIDATE_TOP_K,
+    DEFAULT_ASK_MAX_OPTIONS,
+    apply_taxonomy_answer_to_predictions,
+    build_runtime_taxonomy_question,
+)
 from ask2know.questions.question_selector import QuestionSelector
 from ask2know.questions.question_generator import generate_natural_question, generate_question_context
 from ask2know.learning.weights import AdaptiveWeights
@@ -23,7 +29,7 @@ from ask2know.features.feature_config import (
     summarize_group_weights,
 )
 
-VERSION = '0.4.63.1'
+VERSION = '0.5.0'
 
 
 def open_image_file(image_path):
@@ -743,8 +749,17 @@ def main():
             continue
 
         print('\n候选差距较小，系统不确定，进入主动询问。')
-        q = q_selector.select(results[0], results[1], weights=summarize_group_weights(aw.export(), feature_spec))
-        generated = generate_natural_question(results[0], results[1], q, summarize_group_weights(aw.export(), feature_spec), sample_path, pairwise_manager=pairwise)
+        taxonomy_q, taxonomy_generated = build_runtime_taxonomy_question(
+            results,
+            max_options=cfg.get('question', {}).get('max_taxonomy_options', DEFAULT_ASK_MAX_OPTIONS),
+            candidate_top_k=cfg.get('question', {}).get('ask_candidate_top_k', DEFAULT_ASK_CANDIDATE_TOP_K),
+        )
+        if cfg.get('question', {}).get('enable_taxonomy_ask', True) and taxonomy_q:
+            q = taxonomy_q
+            generated = taxonomy_generated
+        else:
+            q = q_selector.select(results[0], results[1], weights=summarize_group_weights(aw.export(), feature_spec))
+            generated = generate_natural_question(results[0], results[1], q, summarize_group_weights(aw.export(), feature_spec), sample_path, pairwise_manager=pairwise)
 
         print('\n系统分析:')
         print(generated['evidence'])
@@ -759,23 +774,86 @@ def main():
         if not ans:
             ans = q['options'][-1][0]
 
-        answer_text, before, after = apply_answer_to_weights(
-            aw,
-            q,
-            ans,
-            feature_expander=lambda keys: expand_feature_adjustments(keys, feature_spec),
-        )
-        if answer_text is None:
+        selected = None
+        for key, opt_text, action in q['options']:
+            if str(key).upper() == ans:
+                selected = (key, opt_text, action)
+                break
+        if selected is None:
             print('无效选项，跳过本次问题更新。')
             logs.append({'sample': sample_path, 'before': results, 'asked': True, 'question': q['id'], 'answer': ans, 'valid_answer': False})
             continue
+        _, answer_text, action = selected
+        before = aw.export()
+        after = before
+        if q.get('kind') == 'taxonomy_resolution' or action.get('kind') == 'taxonomy_resolution':
+            _reranked_results, matched = apply_taxonomy_answer_to_predictions(results, action.get('path_prefix') or [])
+            if not matched:
+                print('当前候选中没有匹配这个分层选项的类别，跳过本次问题更新。')
+                logs.append({'sample': sample_path, 'before': results, 'asked': True, 'question': q['id'], 'answer': ans, 'valid_answer': False})
+                continue
+            question_kind = 'taxonomy_resolution'
+            new_results = matched
+            question_turns = 1
+            max_questions = int(cfg.get('question', {}).get('max_questions_per_sample', 2))
+            while question_turns < max(1, max_questions):
+                next_q, next_generated = build_runtime_taxonomy_question(
+                    new_results,
+                    max_options=cfg.get('question', {}).get('max_taxonomy_options', DEFAULT_ASK_MAX_OPTIONS),
+                    candidate_top_k=cfg.get('question', {}).get('ask_candidate_top_k', DEFAULT_ASK_CANDIDATE_TOP_K),
+                )
+                if not next_q:
+                    break
+                print('\n继续确认分层:')
+                print(next_generated['evidence'])
+                print(next_generated['question'])
+                a_label = new_results[0]['label'] if new_results else ''
+                b_label = new_results[1]['label'] if len(new_results) > 1 else ''
+                for key, opt_text, _ in next_q['options']:
+                    print(f'{key}. ' + opt_text.format(a=a_label, b=b_label))
+                next_ans = input('请输入选项，直接回车表示不确定: ').strip().upper()
+                if not next_ans:
+                    next_ans = next_q['options'][-1][0]
+                selected_next = None
+                for key, opt_text, next_action in next_q['options']:
+                    if str(key).upper() == next_ans:
+                        selected_next = (key, opt_text, next_action)
+                        break
+                if selected_next is None:
+                    print('无效选项，停止继续追问。')
+                    break
+                _, answer_text, next_action = selected_next
+                _reranked_results, matched = apply_taxonomy_answer_to_predictions(new_results, next_action.get('path_prefix') or [])
+                if not matched:
+                    print('当前候选中没有匹配这个分层选项的类别，停止继续追问。')
+                    break
+                q = next_q
+                generated = next_generated
+                ans = next_ans
+                new_results = matched
+                question_turns += 1
+        else:
+            answer_text, before, after = apply_answer_to_weights(
+                aw,
+                q,
+                ans,
+                feature_expander=lambda keys: expand_feature_adjustments(keys, feature_spec),
+            )
+            if answer_text is None:
+                print('无效选项，跳过本次问题更新。')
+                logs.append({'sample': sample_path, 'before': results, 'asked': True, 'question': q['id'], 'answer': ans, 'valid_answer': False})
+                continue
+            new_results = model.predict(sample_path, aw.export())
+            question_kind = 'feature_weight_update'
 
         print('\n用户回答:', answer_text.format(a=results[0]['label'], b=results[1]['label']))
-        print('权重更新前:', pretty_group_weights(before, feature_spec))
-        print('权重更新后:', pretty_group_weights(after, feature_spec))
+        if question_kind == 'taxonomy_resolution':
+            print('已按用户选择的分层属性过滤候选。')
+        else:
+            print('权重更新前:', pretty_group_weights(before, feature_spec))
+            print('权重更新后:', pretty_group_weights(after, feature_spec))
 
         print('\n重新识别结果:')
-        new_results = model.predict(sample_path, aw.export())
         display_results(new_results)
 
         predicted_label = new_results[0]['label']
@@ -789,7 +867,7 @@ def main():
         helpful = False
         if pool_info.get('decision') == 'confirmed':
             old_gap = results[0]['score'] - results[1]['score']
-            new_gap = new_results[0]['score'] - new_results[1]['score']
+            new_gap = new_results[0]['score'] - new_results[1]['score'] if len(new_results) >= 2 else float('inf')
             helpful = new_gap >= old_gap and pool_info.get('label') == predicted_label
 
         if enable_question_reward:
@@ -809,6 +887,7 @@ def main():
             'global_uncertain': False,
             'asked': True,
             'question': q['id'],
+            'question_kind': question_kind,
             'generated_question': generated,
             'answer': ans,
             'answer_text': answer_text.format(a=results[0]['label'], b=results[1]['label']),

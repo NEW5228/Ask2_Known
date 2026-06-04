@@ -19,6 +19,13 @@ from ask2know.inference.uncertainty import (
 from ask2know.learning.feedback_updater import apply_answer_to_weights, update_question_reward
 from ask2know.learning.weights import AdaptiveWeights
 from ask2know.questions.question_generator import generate_natural_question
+from ask2know.questions.ask_resolver import (
+    DEFAULT_ASK_CANDIDATE_TOP_K,
+    DEFAULT_ASK_MAX_OPTIONS,
+    DEFAULT_ASK_MAX_QUESTIONS,
+    apply_taxonomy_answer_to_predictions,
+    build_runtime_taxonomy_question,
+)
 from ask2know.questions.question_selector import QuestionSelector
 from ask2know.sample_pool.manager import SamplePoolManager, _safe_name
 from ask2know.utils.io_utils import ensure_dir, load_yaml, save_json
@@ -48,6 +55,10 @@ def _result_row(row):
         'knn_score',
         'text_semantic_score',
         'hierarchy_score',
+        'taxonomy_score',
+        'field_clip_score',
+        'field_shape_score',
+        'local_leaf_score',
         'pairwise_score',
         'crop_rerank_score',
         'pair_confusion_score',
@@ -64,6 +75,7 @@ def _result_row(row):
     return {
         'label': row.get('label'),
         'score': round(float(row.get('score', 0.0)), 4),
+        'taxonomy_path': list(row.get('taxonomy_path') or []),
         'detail': {k: round(float(v), 4) for k, v in (row.get('group_detail') or row.get('detail') or {}).items()},
         'system_detail': {k: round(float(v), 4) for k, v in (row.get('system_detail') or {}).items()},
         'sources': sources,
@@ -96,7 +108,8 @@ class LearningSession:
         self.objects = []
         self.feature_spec = {}
         self.train_samples = []
-        self.unknown_samples = []
+        self.unlabeled_samples = []
+        self.unknown_samples = self.unlabeled_samples
         self.logs = []
         self.index = -1
         self.current_sample = None
@@ -105,6 +118,7 @@ class LearningSession:
         self.pending_question = None
         self.pending_generated = None
         self.pending_question_feedback = None
+        self.question_turns = 0
         self.finished = False
 
     def initialize(self):
@@ -134,18 +148,19 @@ class LearningSession:
 
         if self.cfg.get('train_import', {}).get('auto_rename', True):
             self.pool.normalize_train_images(_class_names(self.objects))
-        unknown_import_cfg = self.cfg.get('unknown_import', self.cfg.get('unlabeled_import', {'auto_rename': True}))
-        if unknown_import_cfg.get('auto_rename', True):
-            self.pool.normalize_unknown()
+        unlabeled_import_cfg = self.cfg.get('unlabeled_import', self.cfg.get('unknown_import', {'auto_rename': True}))
+        if unlabeled_import_cfg.get('auto_rename', True):
+            self.pool.normalize_unlabeled()
 
         self.train_samples = self.loader.load_train_samples()
-        self.unknown_samples = self.loader.load_unknown_samples()
+        self.unlabeled_samples = self.loader.load_unlabeled_samples()
+        self.unknown_samples = self.unlabeled_samples
         if not self.objects:
             raise RuntimeError('没有找到类别。请先新建项目或添加类别。')
         if not self.train_samples:
             raise RuntimeError('没有找到训练样本。请先为每个类别导入少量已知图片。')
-        if not self.unknown_samples:
-            raise RuntimeError('没有找到待学习 unknown 图片。请先导入待识别图片。')
+        if not self.unlabeled_samples:
+            raise RuntimeError('没有找到待学习 unlabeled 图片。请先在“添加数据集”中导入未标注图片。')
 
         initial_weights = initial_feature_weights(self.cfg, self.feature_spec)
         self.aw = AdaptiveWeights(
@@ -192,21 +207,31 @@ class LearningSession:
             'classes': _class_names(self.objects),
             'display_features': list(self.feature_spec.get('display_features', [])),
             'train_count': len(self.train_samples),
-            'unknown_count': len(self.unknown_samples),
+            'unlabeled_count': len(self.unlabeled_samples),
+            'unknown_count': len(self.unlabeled_samples),
         }
 
     def advance(self):
         if self.finished:
             return {'mode': 'done', 'message': '本轮学习已经结束。'}
         self.index += 1
-        if self.index >= len(self.unknown_samples):
+        if self.index >= len(self.unlabeled_samples):
             return self.finish()
 
-        self.current_sample = self.unknown_samples[self.index]
+        self.current_sample = self.unlabeled_samples[self.index]
         self.pending_question = None
         self.pending_generated = None
         self.pending_question_feedback = None
+        self.question_turns = 0
         return self._predict_current()
+
+    def _build_taxonomy_question(self, results):
+        question_cfg = self.cfg.get('question', {}) if self.cfg else {}
+        return build_runtime_taxonomy_question(
+            results,
+            max_options=question_cfg.get('max_taxonomy_options', DEFAULT_ASK_MAX_OPTIONS),
+            candidate_top_k=question_cfg.get('ask_candidate_top_k', DEFAULT_ASK_CANDIDATE_TOP_K),
+        )
 
     def _predict_current(self):
         sample_path = self.current_sample['path']
@@ -225,15 +250,20 @@ class LearningSession:
         else:
             mode = 'ask'
             weights = summarize_group_weights(self.aw.export(), self.feature_spec)
-            self.pending_question = self.q_selector.select(self.current_results[0], self.current_results[1], weights=weights)
-            self.pending_generated = generate_natural_question(
-                self.current_results[0],
-                self.current_results[1],
-                self.pending_question,
-                weights,
-                sample_path,
-                pairwise_manager=self.pairwise,
-            )
+            taxonomy_question, taxonomy_generated = self._build_taxonomy_question(self.current_results)
+            if self.cfg.get('question', {}).get('enable_taxonomy_ask', True) and taxonomy_question:
+                self.pending_question = taxonomy_question
+                self.pending_generated = taxonomy_generated
+            else:
+                self.pending_question = self.q_selector.select(self.current_results[0], self.current_results[1], weights=weights)
+                self.pending_generated = generate_natural_question(
+                    self.current_results[0],
+                    self.current_results[1],
+                    self.pending_question,
+                    weights,
+                    sample_path,
+                    pairwise_manager=self.pairwise,
+                )
         self.current_state = self._state(mode, self.current_results, reason=reason)
         return self.current_state
 
@@ -244,6 +274,7 @@ class LearningSession:
             b = results[1].get('label') if len(results) > 1 else ''
             question = {
                 'id': self.pending_question.get('id'),
+                'kind': self.pending_question.get('kind', 'feature_weight_update'),
                 'question': self.pending_generated.get('question', ''),
                 'evidence': self.pending_generated.get('evidence', ''),
                 'concept_evidence': self.pending_generated.get('concept_evidence', ''),
@@ -260,7 +291,7 @@ class LearningSession:
             'mode': mode,
             'sample_path': self.current_sample['path'] if self.current_sample else None,
             'sample_index': self.index + 1,
-            'sample_total': len(self.unknown_samples),
+            'sample_total': len(self.unlabeled_samples),
             'classes': _class_names(self.objects),
             'results': [_result_row(row) for row in results[:5]],
             'weights': _pretty_weights(summarize_group_weights(self.aw.export(), self.feature_spec)),
@@ -280,25 +311,64 @@ class LearningSession:
         if not selected_key:
             selected_key = self.pending_question['options'][-1][0]
 
-        answer_text, before, after = apply_answer_to_weights(
-            self.aw,
-            self.pending_question,
-            selected_key,
-            feature_expander=lambda keys: expand_feature_adjustments(keys, self.feature_spec),
-        )
-        if answer_text is None:
+        old_results = self.current_results
+        answered_question = self.pending_question
+        selected = None
+        for key, text, action in answered_question.get('options', []):
+            if str(key).upper() == selected_key:
+                selected = (key, text, action)
+                break
+        if selected is None:
             raise ValueError(f'无法识别的问题选项: {selected_key}')
 
-        old_results = self.current_results
-        self.current_results = self.model.predict(self.current_sample['path'], self.aw.export())
+        key, answer_text, action = selected
+        before = self.aw.export()
+        after = before
+        if answered_question.get('kind') == 'taxonomy_resolution' or action.get('kind') == 'taxonomy_resolution':
+            _reranked, matched = apply_taxonomy_answer_to_predictions(
+                self.current_results,
+                action.get('path_prefix') or [],
+            )
+            if not matched:
+                raise ValueError('当前候选中没有匹配这个分层选项的类别。')
+            self.current_results = matched
+            self.question_turns += 1
+            feedback_kind = 'taxonomy_resolution'
+        else:
+            answer_text, before, after = apply_answer_to_weights(
+                self.aw,
+                answered_question,
+                selected_key,
+                feature_expander=lambda keys: expand_feature_adjustments(keys, self.feature_spec),
+            )
+            if answer_text is None:
+                raise ValueError(f'无法识别的问题选项: {selected_key}')
+            self.current_results = self.model.predict(self.current_sample['path'], self.aw.export())
+            feedback_kind = 'feature_weight_update'
+
         answer_text = answer_text.format(a=old_results[0]['label'], b=old_results[1]['label'])
         self.pending_question_feedback = {
+            'question_id': answered_question.get('id'),
+            'generated_question': self.pending_generated,
             'answer': selected_key,
             'answer_text': answer_text,
+            'kind': feedback_kind,
             'weights_before': _pretty_weights(summarize_group_weights(before, self.feature_spec)),
             'weights_after': _pretty_weights(summarize_group_weights(after, self.feature_spec)),
             'results_before': [_result_row(row) for row in old_results[:5]],
+            'results_after': [_result_row(row) for row in self.current_results[:5]],
         }
+        if feedback_kind == 'taxonomy_resolution':
+            max_questions = int(self.cfg.get('question', {}).get('max_questions_per_sample', DEFAULT_ASK_MAX_QUESTIONS))
+            if self.question_turns < max(1, max_questions):
+                next_question, next_generated = self._build_taxonomy_question(self.current_results)
+                if next_question:
+                    self.pending_question = next_question
+                    self.pending_generated = next_generated
+                    self.current_state = self._state('ask', self.current_results)
+                    return self.current_state
+        self.pending_question = None
+        self.pending_generated = None
         self.current_state = self._state('confirm_after_question', self.current_results)
         return self.current_state
 
@@ -348,18 +418,19 @@ class LearningSession:
                 old_gap = float(old_results[0]['score']) - float(old_results[1]['score'])
             new_gap = top_gap(self.current_results)
             helpful = pool_info.get('decision') == 'confirmed' and new_gap >= old_gap and pool_info.get('label') == predicted_label
+            question_id = self.pending_question_feedback.get('question_id') or (self.pending_question or {}).get('id') or ''
             if self.cfg.get('question', {}).get('enable_question_reward', True):
-                update_question_reward(self.q_selector.question_weights, self.pending_question['id'], helpful)
+                update_question_reward(self.q_selector.question_weights, question_id, helpful)
             self.pairwise.record_question_result(
                 self.pending_question_feedback['results_before'][0]['label'],
                 self.pending_question_feedback['results_before'][1]['label'],
-                self.pending_question['id'],
+                question_id,
                 helpful,
             )
             log_item.update({
                 'asked': True,
-                'question': self.pending_question['id'],
-                'generated_question': self.pending_generated,
+                'question': question_id,
+                'generated_question': self.pending_question_feedback.get('generated_question'),
                 'answer': self.pending_question_feedback['answer'],
                 'answer_text': self.pending_question_feedback['answer_text'],
                 'weights_before': self.pending_question_feedback['weights_before'],

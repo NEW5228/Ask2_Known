@@ -29,6 +29,8 @@ from ask2know.data.dataset_loader import IMAGE_EXTS, DatasetLoader
 from ask2know.deployment import (
     build_deployment_bundle,
     build_deployment_bundle_from_model_cache,
+    load_deployment_bundle,
+    predict_with_loaded_bundle,
 )
 from ask2know.evaluation import evaluate_unknown_audit_logs
 from ask2know.features.feature_config import PRESET_DEFAULT_GROUPS, USER_FEATURE_GROUPS
@@ -37,6 +39,52 @@ from ask2know.runtime.session import LearningSession, add_class_to_project
 from ask2know.sample_pool.manager import _safe_name
 from ask2know.utils.io_utils import load_json, load_yaml, save_json
 from scripts.package_model import build_package
+from scripts.predict_folder import flatten_row, image_paths, write_csv
+
+
+ALGORITHM_PROFILES = {
+    'interactive_hierarchy': {
+        'label': '分层交互识别',
+        'description': '分层候选、最多两轮 ASK、支持在线反馈。',
+    },
+    'classic_similarity': {
+        'label': '经典相似度识别',
+        'description': '保留旧版原型相似度与单轮确认流程，适合兼容旧项目。',
+    },
+}
+
+ALGORITHM_PROFILE_ALIASES = {
+    'latest_online_ask2': 'interactive_hierarchy',
+    'legacy_04631': 'classic_similarity',
+}
+
+
+def apply_algorithm_profile_to_config(config_path, profile_id):
+    cfg = load_yaml(config_path)
+    profile_id = ALGORITHM_PROFILE_ALIASES.get(profile_id, profile_id)
+    profile_id = profile_id if profile_id in ALGORITHM_PROFILES else 'interactive_hierarchy'
+    cfg['algorithm_profile'] = {
+        'id': profile_id,
+        'name': ALGORITHM_PROFILES[profile_id]['label'],
+        'description': ALGORITHM_PROFILES[profile_id]['description'],
+    }
+    question_cfg = cfg.setdefault('question', {})
+    similarity_cfg = cfg.setdefault('similarity', {})
+    if profile_id == 'classic_similarity':
+        question_cfg['max_questions_per_sample'] = 1
+        question_cfg['enable_taxonomy_ask'] = False
+        question_cfg['ask_candidate_top_k'] = 5
+        question_cfg['max_taxonomy_options'] = 5
+        similarity_cfg['recognition_mode'] = 'flat'
+    else:
+        question_cfg['max_questions_per_sample'] = 2
+        question_cfg['enable_taxonomy_ask'] = True
+        question_cfg['ask_candidate_top_k'] = 10
+        question_cfg['max_taxonomy_options'] = 8
+        similarity_cfg['recognition_mode'] = 'multilayer'
+    with open(config_path, 'w', encoding='utf-8') as f:
+        yaml.safe_dump(cfg, f, allow_unicode=True, sort_keys=False)
+    return cfg
 
 
 def parse_class_names(raw):
@@ -79,6 +127,17 @@ class CreateProjectDialog:
         self.name_var = ttk.Entry(body, width=42)
         self.preset_var = ttk.Combobox(body, values=['auto', 'general', 'fruit', 'pet', 'car', 'traffic_sign'], state='readonly')
         self.preset_var.set('auto')
+        self.algorithm_options = [
+            (profile_id, profile['label'])
+            for profile_id, profile in ALGORITHM_PROFILES.items()
+        ]
+        self.algorithm_label_to_id = {label: profile_id for profile_id, label in self.algorithm_options}
+        self.algorithm_var = ttk.Combobox(
+            body,
+            values=[label for _, label in self.algorithm_options],
+            state='readonly',
+        )
+        self.algorithm_var.set(ALGORITHM_PROFILES['interactive_hierarchy']['label'])
 
         self._row(body, 0, '项目名', self.name_var)
         output_row = ttk.Frame(body)
@@ -101,10 +160,11 @@ class CreateProjectDialog:
         self.class_input.bind('<Return>', lambda _event: self.add_class_name())
         self._row(body, 2, '类别列表', class_box)
         self._row(body, 3, '预设', self.preset_var)
+        self._row(body, 4, '算法模式', self.algorithm_var)
 
         self.feature_vars = {}
         features_frame = ttk.LabelFrame(body, text='用户可见特征', padding=8)
-        features_frame.grid(row=4, column=0, columnspan=2, sticky='ew', pady=(8, 0))
+        features_frame.grid(row=5, column=0, columnspan=2, sticky='ew', pady=(8, 0))
         defaults = set(PRESET_DEFAULT_GROUPS['general'])
         for idx, name in enumerate(USER_FEATURE_GROUPS):
             var = BooleanVar(value=name in defaults)
@@ -112,7 +172,7 @@ class CreateProjectDialog:
             ttk.Checkbutton(features_frame, text=name, variable=var).grid(row=idx // 4, column=idx % 4, sticky='w', padx=8, pady=3)
 
         buttons = ttk.Frame(body)
-        buttons.grid(row=5, column=0, columnspan=2, sticky='e', pady=(12, 0))
+        buttons.grid(row=6, column=0, columnspan=2, sticky='e', pady=(12, 0))
         ttk.Button(buttons, text='取消', command=self.win.destroy).pack(side=RIGHT)
         ttk.Button(buttons, text='创建', command=self.create).pack(side=RIGHT, padx=(0, 8))
 
@@ -161,6 +221,8 @@ class CreateProjectDialog:
                 feature_preset=self.preset_var.get(),
                 features=features,
             )
+            profile_id = self.algorithm_label_to_id.get(self.algorithm_var.get(), 'interactive_hierarchy')
+            apply_algorithm_profile_to_config(self.result['config_path'], profile_id)
         except Exception as exc:
             messagebox.showerror('创建失败', str(exc), parent=self.win)
             return
@@ -171,8 +233,8 @@ class Ask2KnowDesktopApp:
     def __init__(self, root):
         self.root = root
         self.root.title('Ask2Know')
-        self.root.geometry('1180x740')
-        self.root.minsize(1000, 640)
+        self.root.geometry('1220x780')
+        self.root.minsize(1040, 680)
         self._configure_style()
         self.session = None
         self.current_state = None
@@ -183,36 +245,131 @@ class Ask2KnowDesktopApp:
         self.deploy_model = None
         self.deploy_weights = None
         self.deploy_bundle = None
+        self.nav_buttons = {}
 
         self.status_var = ttk.Label(root, text='请选择或新建项目。', anchor='w', style='Status.TLabel')
         self.status_var.pack(fill=X, side='bottom')
 
-        self.main_frame = ttk.Frame(root, padding=(14, 10, 14, 10), style='App.TFrame')
-        self.main_frame.pack(fill=BOTH, expand=True)
-        self._build_app_header(self.main_frame)
+        self.shell = ttk.Frame(root, style='App.TFrame')
+        self.shell.pack(fill=BOTH, expand=True)
 
-        self.notebook = ttk.Notebook(self.main_frame, style='App.TNotebook')
-        self.notebook.pack(fill=BOTH, expand=True)
+        self.launch_frame = ttk.Frame(self.shell, padding=0, style='Launch.TFrame')
+        self.workbench_frame = ttk.Frame(self.shell, padding=(14, 10, 14, 10), style='App.TFrame')
+        self._build_launch_page(self.launch_frame)
+        self._build_workbench(self.workbench_frame)
+        self.show_launch_page()
+
+    def _build_workbench(self, parent):
+        self.main_frame = parent
+
+        self.notebook = ttk.Notebook(self.main_frame, style='Workbench.TNotebook')
 
         self.project_tab = ttk.Frame(self.notebook, padding=12, style='Page.TFrame')
+        self.dataset_tab = ttk.Frame(self.notebook, padding=12, style='Page.TFrame')
+        self.trainset_tab = ttk.Frame(self.notebook, padding=12, style='Page.TFrame')
         self.learn_tab = ttk.Frame(self.notebook, padding=12, style='Page.TFrame')
         self.report_tab = ttk.Frame(self.notebook, padding=12, style='Page.TFrame')
         self.validate_tab = ttk.Frame(self.notebook, padding=12, style='Page.TFrame')
         self.deploy_tab = ttk.Frame(self.notebook, padding=12, style='Page.TFrame')
-        self.notebook.add(self.project_tab, text='项目')
-        self.notebook.add(self.learn_tab, text='学习')
-        self.notebook.add(self.report_tab, text='报告')
-        self.notebook.add(self.validate_tab, text='验证')
-        self.notebook.add(self.deploy_tab, text='导出模型')
+        self.analysis_tab = ttk.Frame(self.notebook, padding=12, style='Page.TFrame')
+        self.notebook.add(self.project_tab, text='项目管理')
+        self.notebook.add(self.dataset_tab, text='添加数据集')
+        self.notebook.add(self.trainset_tab, text='创建训练集')
+        self.notebook.add(self.learn_tab, text='训练模型')
+        self.notebook.add(self.report_tab, text='训练报告')
+        self.notebook.add(self.validate_tab, text='评估模型')
+        self.notebook.add(self.analysis_tab, text='分析图片')
+        self.notebook.add(self.deploy_tab, text='模型导出')
+
+        self._build_app_header(self.main_frame)
+        self.notebook.pack(fill=BOTH, expand=True)
 
         self._build_project_tab()
+        self._build_dataset_tab()
+        self._build_trainset_tab()
         self._build_learning_tab()
         self._build_report_tab()
         self._build_validate_tab()
         self._build_deploy_tab()
+        self._build_analysis_tab()
+        self.select_workbench_tab(self.project_tab, '项目管理')
+
+    def _build_launch_page(self, parent):
+        hero = ttk.Frame(parent, padding=(34, 30), style='Launch.TFrame')
+        hero.pack(fill=BOTH, expand=True)
+
+        left = ttk.Frame(hero, padding=(28, 24), style='Hero.TFrame')
+        right = ttk.Frame(hero, padding=(26, 24), style='Launch.TFrame')
+        left.pack(side=LEFT, fill=BOTH, expand=True)
+        right.pack(side=RIGHT, fill=BOTH, expand=False, padx=(22, 0))
+
+        ttk.Label(left, text='Ask2Know 工作台', style='HeroTitle.TLabel').pack(anchor='w')
+        ttk.Label(
+            left,
+            text='低样本视觉识别与主动教学系统',
+            style='HeroSubtitle.TLabel',
+        ).pack(anchor='w', pady=(10, 0))
+        ttk.Label(
+            left,
+            text='用于创建项目、管理训练数据、配置算法、训练模型、评估效果并分析图片。请选择右侧入口开始。',
+            style='HeroBody.TLabel',
+            wraplength=560,
+        ).pack(anchor='w', pady=(28, 0))
+
+        accent = ttk.Frame(left, style='HeroAccent.TFrame')
+        accent.pack(fill=X, pady=(34, 0))
+        for label, text in (
+            ('项目', '创建或加载 task_config.yaml 项目'),
+            ('训练', '导入数据并选择算法配置'),
+            ('使用', '导出模型或直接分析图片'),
+        ):
+            block = ttk.Frame(accent, padding=(12, 10), style='HeroMetric.TFrame')
+            block.pack(side=LEFT, fill=X, expand=True, padx=(0, 10))
+            ttk.Label(block, text=label, style='HeroMetricTitle.TLabel').pack(anchor='w')
+            ttk.Label(block, text=text, style='HeroMetricBody.TLabel', wraplength=150).pack(anchor='w', pady=(4, 0))
+
+        card = ttk.Frame(right, padding=22, style='StartCard.TFrame')
+        card.pack(fill=Y)
+        ttk.Label(card, text='开始使用', style='StartTitle.TLabel').pack(anchor='w')
+        ttk.Label(
+            card,
+            text='选择一个入口，系统会切换到项目工作台。',
+            style='StartHint.TLabel',
+            wraplength=310,
+        ).pack(anchor='w', pady=(6, 18))
+        ttk.Button(
+            card,
+            text='创建项目',
+            command=self.create_project,
+            style='Primary.TButton',
+            width=28,
+        ).pack(fill=X, pady=(0, 10))
+        ttk.Button(
+            card,
+            text='加载项目',
+            command=self.open_config,
+            style='Secondary.TButton',
+            width=28,
+        ).pack(fill=X)
+        ttk.Separator(card).pack(fill=X, pady=18)
+        ttk.Label(
+            card,
+            text='创建项目时可以选择经典相似度识别，或分层交互识别；加载项目后也可以在“创建训练集”中调整。',
+            style='StartHint.TLabel',
+            wraplength=310,
+        ).pack(anchor='w')
+
+    def show_launch_page(self):
+        self.workbench_frame.pack_forget()
+        self.launch_frame.pack(fill=BOTH, expand=True)
+        self.set_status('请选择创建项目或加载项目。')
+
+    def show_workbench(self):
+        self.launch_frame.pack_forget()
+        self.workbench_frame.pack(fill=BOTH, expand=True)
 
     def _configure_style(self):
-        self.root.configure(bg='#f4f6f8')
+        self.root.configure(bg='#edf3f8')
         style = ttk.Style(self.root)
         try:
             style.theme_use('clam')
@@ -222,49 +379,91 @@ class Ask2KnowDesktopApp:
         title_font = ('Microsoft YaHei UI', 13, 'bold')
         section_font = ('Microsoft YaHei UI', 10, 'bold')
         style.configure('.', font=base_font)
-        style.configure('App.TFrame', background='#f4f6f8')
-        style.configure('Page.TFrame', background='#ffffff')
-        style.configure('TFrame', background='#ffffff')
-        style.configure('TLabel', background='#ffffff', foreground='#1f2933')
-        style.configure('Muted.TLabel', background='#ffffff', foreground='#667085')
-        style.configure('Title.TLabel', background='#f4f6f8', foreground='#111827', font=title_font)
-        style.configure('Subtitle.TLabel', background='#f4f6f8', foreground='#667085')
-        style.configure('PageTitle.TLabel', background='#ffffff', foreground='#111827', font=title_font)
-        style.configure('PageSubtitle.TLabel', background='#ffffff', foreground='#667085')
-        style.configure('Status.TLabel', background='#eef2f6', foreground='#344054', padding=(12, 5))
-        style.configure('TLabelframe', background='#ffffff', bordercolor='#d9e1ea', relief='solid')
-        style.configure('TLabelframe.Label', background='#ffffff', foreground='#111827', font=section_font)
-        style.configure('TButton', padding=(10, 4), borderwidth=1)
-        style.configure('Primary.TButton', padding=(12, 5), background='#2563eb', foreground='#ffffff')
-        style.map('Primary.TButton', background=[('active', '#1d4ed8'), ('pressed', '#1e40af')])
-        style.configure('TCheckbutton', background='#ffffff', foreground='#1f2933')
+        style.configure('App.TFrame', background='#edf3f8')
+        style.configure('Launch.TFrame', background='#edf3f8')
+        style.configure('Hero.TFrame', background='#17324d', relief='flat')
+        style.configure('HeroAccent.TFrame', background='#17324d')
+        style.configure('HeroMetric.TFrame', background='#24445f', relief='flat')
+        style.configure('StartCard.TFrame', background='#ffffff', relief='solid', borderwidth=1)
+        style.configure('Page.TFrame', background='#f8fafc')
+        style.configure('Toolbar.TFrame', background='#dbe8f1')
+        style.configure('TFrame', background='#f8fafc')
+        style.configure('TLabel', background='#f8fafc', foreground='#1f2933')
+        style.configure('Muted.TLabel', background='#f8fafc', foreground='#667085')
+        style.configure('Title.TLabel', background='#edf3f8', foreground='#17324d', font=title_font)
+        style.configure('Subtitle.TLabel', background='#edf3f8', foreground='#667085')
+        style.configure('PageTitle.TLabel', background='#f8fafc', foreground='#17324d', font=title_font)
+        style.configure('PageSubtitle.TLabel', background='#f8fafc', foreground='#667085')
+        style.configure('HeroTitle.TLabel', background='#17324d', foreground='#ffffff', font=('Microsoft YaHei UI', 30, 'bold'))
+        style.configure('HeroSubtitle.TLabel', background='#17324d', foreground='#b6e3ff', font=('Microsoft YaHei UI', 15, 'bold'))
+        style.configure('HeroBody.TLabel', background='#17324d', foreground='#d7e5ee', font=('Microsoft YaHei UI', 11))
+        style.configure('HeroChip.TLabel', background='#2a4a68', foreground='#ffffff', padding=(12, 7))
+        style.configure('HeroMetricTitle.TLabel', background='#24445f', foreground='#ffffff', font=('Microsoft YaHei UI', 11, 'bold'))
+        style.configure('HeroMetricBody.TLabel', background='#24445f', foreground='#d7e5ee')
+        style.configure('StartTitle.TLabel', background='#ffffff', foreground='#17324d', font=('Microsoft YaHei UI', 17, 'bold'))
+        style.configure('StartHint.TLabel', background='#ffffff', foreground='#667085')
+        style.configure('Status.TLabel', background='#dbe8f1', foreground='#344054', padding=(12, 6))
+        style.configure('TLabelframe', background='#f8fafc', bordercolor='#cbd8e2', relief='solid')
+        style.configure('TLabelframe.Label', background='#f8fafc', foreground='#17324d', font=section_font)
+        style.configure('TButton', padding=(10, 5), borderwidth=1)
+        style.configure('Primary.TButton', padding=(14, 7), background='#1f6feb', foreground='#ffffff')
+        style.map('Primary.TButton', background=[('active', '#1d4ed8'), ('pressed', '#1e40af')], foreground=[('active', '#ffffff')])
+        style.configure('Secondary.TButton', padding=(14, 7), background='#e7eef5', foreground='#17324d')
+        style.map('Secondary.TButton', background=[('active', '#dbe8f1'), ('pressed', '#cbd8e2')])
+        style.configure('Nav.TButton', padding=(12, 7), background='#dbe8f1', foreground='#17324d')
+        style.configure('NavActive.TButton', padding=(12, 7), background='#17324d', foreground='#ffffff')
+        style.map('NavActive.TButton', background=[('active', '#17324d')], foreground=[('active', '#ffffff')])
+        style.configure('TCheckbutton', background='#f8fafc', foreground='#1f2933')
         style.configure('TEntry', fieldbackground='#ffffff', padding=(6, 5))
         style.configure('Treeview', rowheight=26, fieldbackground='#ffffff', background='#ffffff', foreground='#1f2933')
-        style.configure('Treeview.Heading', background='#eef2f6', foreground='#344054', font=section_font)
-        style.configure('App.TNotebook', background='#f4f6f8', borderwidth=0)
-        style.configure('App.TNotebook.Tab', padding=(14, 6))
-        style.map('App.TNotebook.Tab', background=[('selected', '#ffffff')], foreground=[('selected', '#111827')])
+        style.configure('Treeview.Heading', background='#dbe8f1', foreground='#344054', font=section_font)
+        style.configure('Workbench.TNotebook', background='#edf3f8', borderwidth=0)
+        style.layout('Workbench.TNotebook.Tab', [])
 
     def _build_app_header(self, parent):
         header = ttk.Frame(parent, style='App.TFrame')
-        header.pack(fill=X, pady=(0, 8))
-        ttk.Label(header, text='Ask2Know', style='Title.TLabel').pack(side=LEFT)
+        header.pack(fill=X, pady=(0, 10))
+        brand = ttk.Frame(header, style='App.TFrame')
+        brand.pack(side=LEFT, fill=Y)
+        ttk.Label(brand, text='Ask2Know', style='Title.TLabel').pack(anchor='w')
+        ttk.Label(brand, text='项目工作台', style='Subtitle.TLabel').pack(anchor='w')
+
+        nav = ttk.Frame(header, padding=(10, 8), style='Toolbar.TFrame')
+        nav.pack(side=RIGHT, fill=X, expand=True, padx=(18, 0))
+        nav_items = [
+            ('项目管理', self.project_tab),
+            ('添加数据集', self.dataset_tab),
+            ('创建训练集', self.trainset_tab),
+            ('训练模型', self.learn_tab),
+            ('评估模型', self.validate_tab),
+            ('分析图片', self.analysis_tab),
+            ('模型导出', self.deploy_tab),
+        ]
+        for label, tab in nav_items:
+            button = ttk.Button(
+                nav,
+                text=label,
+                command=lambda target=tab, name=label: self.select_workbench_tab(target, name),
+                style='Nav.TButton',
+            )
+            button.pack(side=LEFT, padx=(0, 8))
+            self.nav_buttons[label] = button
+        ttk.Button(nav, text='返回首页', command=self.show_launch_page, style='Secondary.TButton').pack(side=RIGHT)
+
+    def select_workbench_tab(self, tab, label=None):
+        self.notebook.select(tab)
+        active = label
+        for name, button in self.nav_buttons.items():
+            button.configure(style='NavActive.TButton' if name == active else 'Nav.TButton')
 
     def _build_project_tab(self):
-        workflow = ttk.LabelFrame(self.project_tab, text='项目流程', padding=10)
+        workflow = ttk.LabelFrame(self.project_tab, text='项目管理', padding=10)
         workflow.pack(fill=X, pady=(0, 10))
         project_actions = ttk.Frame(workflow)
         project_actions.pack(fill=X)
-        ttk.Button(project_actions, text='新建项目', command=self.create_project, style='Primary.TButton').pack(side=LEFT)
-        ttk.Button(project_actions, text='打开项目', command=self.open_config).pack(side=LEFT, padx=(8, 0))
+        ttk.Button(project_actions, text='打开项目配置', command=self.open_config, style='Primary.TButton').pack(side=LEFT)
         ttk.Button(project_actions, text='加载项目', command=self.initialize_session).pack(side=LEFT, padx=(8, 0))
         ttk.Button(project_actions, text='新增类别', command=self.add_class).pack(side=LEFT, padx=(8, 0))
-
-        data_actions = ttk.Frame(workflow)
-        data_actions.pack(fill=X, pady=(8, 0))
-        ttk.Button(data_actions, text='导入单类训练图片', command=self.import_train_images).pack(side=LEFT)
-        ttk.Button(data_actions, text='批量导入训练文件夹', command=self.import_train_folder).pack(side=LEFT, padx=(8, 0))
-        ttk.Button(data_actions, text='导入 unknown', command=self.import_unknown_images).pack(side=LEFT, padx=(8, 0))
 
         config_frame = ttk.LabelFrame(self.project_tab, text='当前配置', padding=10)
         config_frame.pack(fill=X, pady=(0, 10))
@@ -298,6 +497,85 @@ class Ask2KnowDesktopApp:
         info_x_scroll.grid(row=1, column=0, sticky='ew')
         info_table.rowconfigure(0, weight=1)
         info_table.columnconfigure(0, weight=1)
+
+    def _build_dataset_tab(self):
+        header = ttk.Frame(self.dataset_tab)
+        header.pack(fill=X, pady=(0, 12))
+        ttk.Label(header, text='添加数据集', style='PageTitle.TLabel').pack(anchor='w')
+        ttk.Label(
+            header,
+            text='把训练图片和未标注图片导入当前项目。训练图片按类别保存，unlabeled 图片用于后续学习和评估。',
+            style='PageSubtitle.TLabel',
+        ).pack(anchor='w', pady=(3, 0))
+
+        actions = ttk.LabelFrame(self.dataset_tab, text='数据导入', padding=12)
+        actions.pack(fill=X)
+        ttk.Button(actions, text='导入单类训练图片', command=self.import_train_images, style='Primary.TButton').grid(row=0, column=0, sticky='ew', padx=(0, 8), pady=(0, 8))
+        ttk.Button(actions, text='批量导入训练文件夹', command=self.import_train_folder).grid(row=0, column=1, sticky='ew', padx=(0, 8), pady=(0, 8))
+        ttk.Button(actions, text='导入未标注图片', command=self.import_unlabeled_images).grid(row=0, column=2, sticky='ew', pady=(0, 8))
+        ttk.Label(
+            actions,
+            text='批量导入时，文件夹名会作为类别名；项目中不存在的类别会提示是否自动新增。',
+            style='Muted.TLabel',
+        ).grid(row=1, column=0, columnspan=3, sticky='w')
+        for col in range(3):
+            actions.columnconfigure(col, weight=1)
+
+        summary = ttk.LabelFrame(self.dataset_tab, text='当前项目数据', padding=10)
+        summary.pack(fill=BOTH, expand=True, pady=(10, 0))
+        ttk.Label(
+            summary,
+            text='导入后可回到“项目管理”查看类别和训练样本数量。',
+            style='Muted.TLabel',
+        ).pack(anchor='w')
+        ttk.Button(summary, text='刷新项目内容', command=self.refresh_project_info).pack(anchor='w', pady=(10, 0))
+
+    def _build_trainset_tab(self):
+        header = ttk.Frame(self.trainset_tab)
+        header.pack(fill=X, pady=(0, 12))
+        ttk.Label(header, text='创建训练集', style='PageTitle.TLabel').pack(anchor='w')
+        ttk.Label(
+            header,
+            text='选择当前项目的训练和识别算法。配置会写入 task_config.yaml，后续训练、评估和导出都会使用这套设置。',
+            style='PageSubtitle.TLabel',
+        ).pack(anchor='w', pady=(3, 0))
+
+        self.train_algorithm_var = StringVar(value=ALGORITHM_PROFILES['interactive_hierarchy']['label'])
+        self.train_mode_var = StringVar(value='在线学习')
+        self.train_questions_var = StringVar(value='2')
+        self.train_candidate_var = StringVar(value='10')
+        self.train_options_var = StringVar(value='8')
+
+        form = ttk.LabelFrame(self.trainset_tab, text='训练集和算法配置', padding=12)
+        form.pack(fill=X)
+        algorithm_values = [profile['label'] for profile in ALGORITHM_PROFILES.values()]
+        ttk.Label(form, text='算法模式').grid(row=0, column=0, sticky='w', padx=(0, 10), pady=(0, 8))
+        self.train_algorithm_combo = ttk.Combobox(form, textvariable=self.train_algorithm_var, values=algorithm_values, state='readonly')
+        self.train_algorithm_combo.grid(row=0, column=1, sticky='ew', pady=(0, 8))
+        ttk.Label(form, text='学习方式').grid(row=1, column=0, sticky='w', padx=(0, 10), pady=(0, 8))
+        ttk.Combobox(form, textvariable=self.train_mode_var, values=['在线学习', '离线/静态'], state='readonly').grid(row=1, column=1, sticky='ew', pady=(0, 8))
+        ttk.Label(form, text='ASK 最大问题数').grid(row=2, column=0, sticky='w', padx=(0, 10), pady=(0, 8))
+        ttk.Combobox(form, textvariable=self.train_questions_var, values=['1', '2'], state='readonly').grid(row=2, column=1, sticky='ew', pady=(0, 8))
+        ttk.Label(form, text='候选 top-k').grid(row=3, column=0, sticky='w', padx=(0, 10), pady=(0, 8))
+        ttk.Combobox(form, textvariable=self.train_candidate_var, values=['5', '10'], state='readonly').grid(row=3, column=1, sticky='ew', pady=(0, 8))
+        ttk.Label(form, text='每问最大选项').grid(row=4, column=0, sticky='w', padx=(0, 10), pady=(0, 8))
+        ttk.Combobox(form, textvariable=self.train_options_var, values=['5', '8', '10'], state='readonly').grid(row=4, column=1, sticky='ew', pady=(0, 8))
+
+        buttons = ttk.Frame(form)
+        buttons.grid(row=5, column=1, sticky='w', pady=(8, 0))
+        ttk.Button(buttons, text='读取当前配置', command=self.refresh_trainset_options).pack(side=LEFT)
+        ttk.Button(buttons, text='应用训练集配置', command=self.apply_trainset_options, style='Primary.TButton').pack(side=LEFT, padx=(8, 0))
+        ttk.Button(buttons, text='加载训练模型', command=self.initialize_session).pack(side=LEFT, padx=(8, 0))
+        form.columnconfigure(1, weight=1)
+
+        info = ttk.LabelFrame(self.trainset_tab, text='说明', padding=10)
+        info.pack(fill=X, pady=(10, 0))
+        ttk.Label(
+            info,
+            text='经典相似度识别会使用一问/较小候选配置；分层交互识别会使用 top10、最多 8 个选项和最多两问。',
+            style='Muted.TLabel',
+            wraplength=960,
+        ).pack(anchor='w')
 
     def _build_learning_tab(self):
         outer = ttk.Frame(self.learn_tab)
@@ -465,7 +743,7 @@ class Ask2KnowDesktopApp:
         header = ttk.Frame(self.validate_tab)
         header.pack(fill=X, pady=(0, 12))
         ttk.Label(header, text='验证模型', style='PageTitle.TLabel').pack(anchor='w')
-        ttk.Label(header, text='根据已确认的 unknown 学习记录验证当前模型。', style='PageSubtitle.TLabel').pack(anchor='w', pady=(3, 0))
+        ttk.Label(header, text='根据已确认的 unlabeled 学习记录验证当前模型。', style='PageSubtitle.TLabel').pack(anchor='w', pady=(3, 0))
 
         validate_frame = ttk.LabelFrame(self.validate_tab, text='验证', padding=10)
         validate_frame.pack(fill=X)
@@ -556,6 +834,79 @@ class Ask2KnowDesktopApp:
         self.deploy_result_tree.column('nearest', width=280)
         self.deploy_result_tree.pack(fill=BOTH, expand=True, pady=(8, 0))
 
+    def _build_analysis_tab(self):
+        header = ttk.Frame(self.analysis_tab)
+        header.pack(fill=X, pady=(0, 10))
+        ttk.Label(header, text='分析图片', style='PageTitle.TLabel').pack(anchor='w')
+        ttk.Label(
+            header,
+            text='加载训练后导出的模型，添加图片后直接查看识别结果。',
+            style='PageSubtitle.TLabel',
+        ).pack(anchor='w', pady=(3, 0))
+
+        model_frame = ttk.LabelFrame(self.analysis_tab, text='已训练模型', padding=8)
+        model_frame.pack(fill=X)
+        self.deploy_model_var = ttk.Entry(model_frame)
+        self.deploy_model_var.pack(side=LEFT, fill=X, expand=True)
+        ttk.Button(model_frame, text='使用当前项目模型', command=self.load_current_project_for_analysis).pack(side=LEFT, padx=(6, 0))
+        ttk.Button(model_frame, text='选择模型', command=self.choose_deploy_model).pack(side=LEFT, padx=6)
+        ttk.Button(model_frame, text='加载模型', command=self.load_deploy_model, style='Primary.TButton').pack(side=LEFT)
+
+        body = ttk.Frame(self.analysis_tab)
+        body.pack(fill=BOTH, expand=True, pady=(10, 0))
+        left = ttk.Frame(body)
+        right = ttk.Frame(body)
+        left.pack(side=LEFT, fill=BOTH, expand=False)
+        right.pack(side=RIGHT, fill=BOTH, expand=True, padx=(12, 0))
+
+        single = ttk.LabelFrame(left, text='单张图片分析', padding=8)
+        single.pack(fill=X)
+        self.deploy_image_var = ttk.Entry(single, width=54)
+        self.deploy_image_var.pack(fill=X)
+        image_buttons = ttk.Frame(single)
+        image_buttons.pack(fill=X, pady=(6, 0))
+        ttk.Button(image_buttons, text='添加图片', command=self.choose_deploy_image).pack(side=LEFT)
+        ttk.Button(image_buttons, text='分析图片', command=self.predict_deploy_image).pack(side=LEFT, padx=6)
+
+        self.deploy_preview = ttk.Label(left, text='图片预览', anchor='center')
+        self.deploy_preview.pack(fill=BOTH, expand=True, pady=(10, 0))
+
+        folder = ttk.LabelFrame(left, text='批量分析', padding=8)
+        folder.pack(fill=X, pady=(10, 0))
+        ttk.Label(folder, text='输入文件夹').pack(anchor='w')
+        self.deploy_folder_var = ttk.Entry(folder, width=54)
+        self.deploy_folder_var.pack(fill=X)
+        ttk.Label(folder, text='输出 CSV').pack(anchor='w', pady=(6, 0))
+        self.deploy_csv_var = ttk.Entry(folder, width=54)
+        self.deploy_csv_var.pack(fill=X)
+        folder_buttons = ttk.Frame(folder)
+        folder_buttons.pack(fill=X, pady=(6, 0))
+        ttk.Button(folder_buttons, text='选择文件夹', command=self.choose_deploy_folder).pack(side=LEFT)
+        ttk.Button(folder_buttons, text='选择输出', command=self.choose_deploy_csv).pack(side=LEFT, padx=6)
+        ttk.Button(folder_buttons, text='批量分析', command=self.predict_deploy_folder).pack(side=LEFT)
+
+        result_frame = ttk.LabelFrame(right, text='分析结果', padding=8)
+        result_frame.pack(fill=BOTH, expand=True)
+        self.deploy_summary = ttk.Label(result_frame, text='请先加载训练好的模型。', justify='left', wraplength=760)
+        self.deploy_summary.pack(fill=X)
+        self.deploy_result_tree = ttk.Treeview(
+            result_frame,
+            columns=('score', 'margin', 'sources', 'nearest'),
+            show='tree headings',
+            height=14,
+        )
+        self.deploy_result_tree.heading('#0', text='类别')
+        self.deploy_result_tree.heading('score', text='分数')
+        self.deploy_result_tree.heading('margin', text='Top2差距')
+        self.deploy_result_tree.heading('sources', text='证据')
+        self.deploy_result_tree.heading('nearest', text='最近样本')
+        self.deploy_result_tree.column('#0', width=180)
+        self.deploy_result_tree.column('score', width=80)
+        self.deploy_result_tree.column('margin', width=80)
+        self.deploy_result_tree.column('sources', width=260)
+        self.deploy_result_tree.column('nearest', width=280)
+        self.deploy_result_tree.pack(fill=BOTH, expand=True, pady=(8, 0))
+
     def set_status(self, text):
         self.status_var.configure(text=text)
 
@@ -587,7 +938,10 @@ class Ask2KnowDesktopApp:
         if hasattr(self, 'export_config_var'):
             self.export_config_var.set(self.config_path)
         self.refresh_project_info()
-        self.set_status('项目已创建，请导入训练图片和 unknown 图片。')
+        self.refresh_trainset_options()
+        self.show_workbench()
+        self.select_workbench_tab(self.project_tab, '项目管理')
+        self.set_status('项目已创建，请导入训练图片和 unlabeled 图片。')
 
     def open_config(self):
         path = filedialog.askopenfilename(
@@ -602,12 +956,58 @@ class Ask2KnowDesktopApp:
         if hasattr(self, 'export_config_var'):
             self.export_config_var.set(path)
         self.refresh_project_info()
+        self.refresh_trainset_options()
+        self.show_workbench()
+        self.select_workbench_tab(self.project_tab, '项目管理')
 
     def config(self):
         path = self.config_var.get().strip()
         if not path:
             raise RuntimeError('请先选择 task_config.yaml。')
         return load_yaml(path), Path(path)
+
+    def refresh_trainset_options(self):
+        try:
+            cfg, _ = self.config()
+        except Exception as exc:
+            messagebox.showerror('读取失败', str(exc))
+            return
+        profile = cfg.get('algorithm_profile') or {}
+        profile_id = profile.get('id') or ('classic_similarity' if cfg.get('similarity', {}).get('recognition_mode') == 'flat' else 'interactive_hierarchy')
+        profile_id = ALGORITHM_PROFILE_ALIASES.get(profile_id, profile_id)
+        profile_id = profile_id if profile_id in ALGORITHM_PROFILES else 'interactive_hierarchy'
+        self.train_algorithm_var.set(ALGORITHM_PROFILES[profile_id]['label'])
+        runtime_mode = cfg.get('runtime', {}).get('learning_mode', 'online')
+        self.train_mode_var.set('离线/静态' if runtime_mode == 'offline' else '在线学习')
+        question_cfg = cfg.get('question') or {}
+        self.train_questions_var.set(str(question_cfg.get('max_questions_per_sample', 2)))
+        self.train_candidate_var.set(str(question_cfg.get('ask_candidate_top_k', 10)))
+        self.train_options_var.set(str(question_cfg.get('max_taxonomy_options', 8)))
+        self.set_status('已读取当前训练集配置。')
+
+    def apply_trainset_options(self):
+        try:
+            _cfg, config_path = self.config()
+        except Exception as exc:
+            messagebox.showerror('应用失败', str(exc))
+            return
+        label_to_profile = {
+            profile['label']: profile_id
+            for profile_id, profile in ALGORITHM_PROFILES.items()
+        }
+        profile_id = label_to_profile.get(self.train_algorithm_var.get(), 'interactive_hierarchy')
+        cfg = apply_algorithm_profile_to_config(config_path, profile_id)
+        question_cfg = cfg.setdefault('question', {})
+        question_cfg['max_questions_per_sample'] = int(self.train_questions_var.get() or question_cfg.get('max_questions_per_sample', 2))
+        question_cfg['ask_candidate_top_k'] = int(self.train_candidate_var.get() or question_cfg.get('ask_candidate_top_k', 10))
+        question_cfg['max_taxonomy_options'] = int(self.train_options_var.get() or question_cfg.get('max_taxonomy_options', 8))
+        mode = 'offline' if self.train_mode_var.get() == '离线/静态' else 'online'
+        cfg.setdefault('runtime', {})['learning_mode'] = mode
+        cfg.setdefault('online_learning', {})['enable'] = mode == 'online'
+        with open(config_path, 'w', encoding='utf-8') as f:
+            yaml.safe_dump(cfg, f, allow_unicode=True, sort_keys=False)
+        self.refresh_project_info()
+        self.set_status('训练集和算法配置已应用。')
 
     def refresh_project_info(self):
         self.project_info.delete(*self.project_info.get_children())
@@ -618,7 +1018,7 @@ class Ask2KnowDesktopApp:
             loader = DatasetLoader(dataset_dir)
             objects = loader.load_objects()
             train_samples = loader.load_train_samples()
-            unknown_samples = loader.load_unknown_samples()
+            unlabeled_samples = loader.load_unlabeled_samples()
         except Exception as exc:
             self.project_info.insert('', END, text='读取失败', values=(str(exc),))
             return
@@ -627,9 +1027,11 @@ class Ask2KnowDesktopApp:
             '项目目录': cfg.get('paths', {}).get('project_root', ''),
             '数据目录': str(dataset_dir),
             '输出目录': cfg.get('paths', {}).get('output_dir', ''),
+            '算法模式': (cfg.get('algorithm_profile') or {}).get('name', cfg.get('similarity', {}).get('recognition_mode', '')),
+            '学习方式': cfg.get('runtime', {}).get('learning_mode', 'online'),
             '类别': ', '.join([item.get('name', '') for item in objects]),
             '训练样本数': str(len(train_samples)),
-            'unknown 样本数': str(len(unknown_samples)),
+            'unlabeled 样本数': str(len(unlabeled_samples)),
         }
         for key, value in items.items():
             self.project_info.insert('', END, text=key, values=(value,))
@@ -685,7 +1087,7 @@ class Ask2KnowDesktopApp:
                 self.class_var.set(classes[0])
             self.render_state(state)
 
-        self.run_worker('正在加载模型、提取训练特征并预测第一张 unknown 图片...', build_and_advance, done)
+        self.run_worker('正在加载模型、提取训练特征并预测第一张 unlabeled 图片...', build_and_advance, done)
 
     def import_train_images(self):
         try:
@@ -795,10 +1197,10 @@ class Ask2KnowDesktopApp:
 
         self.run_worker(f'正在批量导入 {total_images} 张训练图片...', import_all, done)
 
-    def import_unknown_images(self):
+    def import_unlabeled_images(self):
         try:
             cfg, _ = self.config()
-            dst_dir = Path(cfg['paths']['dataset_dir']) / 'unknown'
+            dst_dir = Path(cfg['paths']['dataset_dir']) / 'unlabeled'
         except Exception as exc:
             messagebox.showerror('导入失败', str(exc))
             return
@@ -807,7 +1209,10 @@ class Ask2KnowDesktopApp:
             return
         count = self.copy_many(paths, dst_dir)
         self.refresh_project_info()
-        self.set_status(f'已导入 {count} 张 unknown 图片。')
+        self.set_status(f'已导入 {count} 张 unlabeled 图片。')
+
+    def import_unknown_images(self):
+        self.import_unlabeled_images()
 
     def choose_images(self):
         return filedialog.askopenfilenames(
@@ -903,7 +1308,7 @@ class Ask2KnowDesktopApp:
         if self.session is None:
             self.initialize_and_advance()
             return
-        self.run_worker('正在预测下一张 unknown 图片...', self.session.advance, self.render_state)
+        self.run_worker('正在预测下一张 unlabeled 图片...', self.session.advance, self.render_state)
 
     def finish_session(self):
         if self.session is None:
@@ -984,6 +1389,43 @@ class Ask2KnowDesktopApp:
         self.notebook.select(self.report_tab)
         self.refresh_project_info()
 
+    def load_current_project_for_analysis(self):
+        config_path = str(self.config_path or self.config_var.get().strip() or '')
+        if not config_path:
+            messagebox.showwarning('缺少项目', '请先创建或加载项目。')
+            return
+
+        def build():
+            _cfg, model_path, _package_dir, cache_path = self._default_deploy_paths(
+                config_path,
+                export_name='current_project_analysis_model',
+            )
+            if cache_path:
+                path, _bundle = build_deployment_bundle_from_model_cache(
+                    config_path,
+                    cache_path,
+                    output_path=model_path,
+                    include_sample_features=True,
+                )
+            else:
+                path, _bundle = build_deployment_bundle(
+                    config_path,
+                    output_path=model_path,
+                    include_sample_features=True,
+                )
+            model, weights, bundle = load_deployment_bundle(path)
+            return Path(path).expanduser().resolve(), model, weights, bundle
+
+        def done(result):
+            self.deploy_model_path, self.deploy_model, self.deploy_weights, self.deploy_bundle = result
+            self.deploy_model_var.delete(0, END)
+            self.deploy_model_var.insert(0, str(self.deploy_model_path))
+            classes = self.deploy_bundle.get('classes') or []
+            self.deploy_summary.configure(text=f'当前项目模型已加载：{self.deploy_model_path}\n类别数: {len(classes)}')
+            self.set_status('当前项目模型已加载，可以添加图片分析。')
+
+        self.run_worker('正在加载当前项目模型用于图片分析...', build, done)
+
     def choose_deploy_model(self):
         path = filedialog.askopenfilename(
             title='选择 Ask2Know 模型',
@@ -1024,9 +1466,17 @@ class Ask2KnowDesktopApp:
             filetypes=[('Images', '*.jpg *.jpeg *.png *.bmp *.webp'), ('All files', '*.*')],
         )
         if path:
+            target_path = path
+            try:
+                cfg, _ = self.config()
+                unknown_dir = Path(cfg['paths']['dataset_dir']) / 'unknown'
+                target_path = str(unique_copy(path, unknown_dir))
+                self.set_status(f'已添加分析图片到 unknown：{target_path}')
+            except Exception:
+                target_path = path
             self.deploy_image_var.delete(0, END)
-            self.deploy_image_var.insert(0, path)
-            self.render_deploy_image(path)
+            self.deploy_image_var.insert(0, target_path)
+            self.render_deploy_image(target_path)
 
     def render_deploy_image(self, path):
         self.deploy_photo = None
@@ -1238,13 +1688,13 @@ class Ask2KnowDesktopApp:
 
         result_frame = ttk.LabelFrame(self.deploy_tab, text='导出结果', padding=10)
         result_frame.pack(fill=X)
-        self.deploy_summary = ttk.Label(
+        self.export_summary = ttk.Label(
             result_frame,
             text='状态：尚未导出。',
             justify='left',
             wraplength=1000,
         )
-        self.deploy_summary.pack(fill=X, anchor='nw')
+        self.export_summary.pack(fill=X, anchor='nw')
 
     def choose_export_config(self):
         path = filedialog.askopenfilename(
@@ -1296,6 +1746,22 @@ class Ask2KnowDesktopApp:
             cache_path = None
         return cfg, model_path, package_dir, cache_path
 
+    def _validation_status_path(self, config_path):
+        config_path = Path(config_path).expanduser().resolve()
+        cfg = load_yaml(config_path)
+        project_root = config_path.parent.parent if config_path.parent.name == 'configs' else config_path.parent
+        output_dir = Path(cfg.get('paths', {}).get('output_dir', project_root / 'outputs'))
+        if not output_dir.is_absolute():
+            output_dir = output_dir.resolve()
+        return output_dir / 'validation_status.json'
+
+    def _require_evaluated_before_export(self, config_path):
+        status_path = self._validation_status_path(config_path)
+        if not status_path.exists():
+            messagebox.showwarning('需要先评估模型', '请先进入“评估模型”并完成评估，然后再导出模型。')
+            return False
+        return True
+
     def choose_export_cache(self):
         path = filedialog.askopenfilename(
             title='选择 prototype_model_cache.json',
@@ -1332,7 +1798,7 @@ class Ask2KnowDesktopApp:
                 logs = load_json(log_path) if log_path.exists() else []
                 source = 'saved_log'
             report = evaluate_unknown_audit_logs(cfg, logs, output_dir)
-            return report, output_dir / 'unknown_validation_report.json', source
+            return report, output_dir / 'unlabeled_validation_report.json', source
 
         def done(result):
             report, report_path, source = result
@@ -1351,6 +1817,8 @@ class Ask2KnowDesktopApp:
         include_samples = bool(self.export_include_samples_var.get())
         if not config_path:
             messagebox.showwarning('缺少项目', '请先选择项目配置。')
+            return
+        if not self._require_evaluated_before_export(config_path):
             return
         export_dir = self.export_dir_var.get().strip()
         export_name = self.export_name_var.get().strip()
@@ -1380,7 +1848,7 @@ class Ask2KnowDesktopApp:
             if not self.package_output_var.get().strip():
                 self.package_output_var.set(str(path.parent / f'{path.stem}_offline_model_package'))
             classes = bundle.get('classes') or []
-            self.deploy_summary.configure(text=f'模型文件已导出：\n{path}\n类别数：{len(classes)}')
+            self.export_summary.configure(text=f'模型文件已导出：\n{path}\n类别数：{len(classes)}')
             self.set_status('模型文件已导出。')
 
         self.run_worker('正在导出模型文件...', export, done)
@@ -1389,6 +1857,8 @@ class Ask2KnowDesktopApp:
         config_path = self.export_config_var.get().strip() or str(self.config_path or '')
         if not config_path:
             messagebox.showwarning('缺少项目', '请先在“项目”页新建项目或打开配置。')
+            return
+        if not self._require_evaluated_before_export(config_path):
             return
         self.export_config_var.set(config_path)
         include_samples = bool(self.export_include_samples_var.get())
@@ -1422,7 +1892,7 @@ class Ask2KnowDesktopApp:
             self.export_cache_var.set(str(cache_path) if cache_path else '')
             classes = bundle.get('classes') or []
             cache_text = '已使用训练缓存' if cache_path else '重新构建模型特征'
-            self.deploy_summary.configure(
+            self.export_summary.configure(
                 text=(
                     f'状态：导出完成\n'
                     f'模型文件：{model_path}\n'
@@ -1466,7 +1936,7 @@ class Ask2KnowDesktopApp:
             )
 
         def done(result):
-            self.deploy_summary.configure(text=f'Python 离线包已生成：\n{result}')
+            self.export_summary.configure(text=f'Python 离线包已生成：\n{result}')
             self.set_status('Python 离线包已生成。')
 
         self.run_worker('正在生成 Python 离线包...', package, done)

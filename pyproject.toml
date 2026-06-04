@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ask2know"
-version = "0.4.63.1"
+version = "0.5.0"
 description = "Low-sample active teaching framework prototype"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -22,3 +22,6 @@ dependencies = [
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["ask2know*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]

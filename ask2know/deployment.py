@@ -191,6 +191,12 @@ def compact_prediction(row):
         'knn_score',
         'text_semantic_score',
         'hierarchy_score',
+        'taxonomy_score',
+        'reference_icon_score',
+        'field_clip_score',
+        'field_shape_score',
+        'local_leaf_score',
+        'fine_grained_score',
         'pairwise_score',
         'crop_rerank_score',
         'pair_confusion_score',
@@ -206,6 +212,7 @@ def compact_prediction(row):
     return {
         'label': row.get('label'),
         'score': round(float(row.get('score', 0.0)), 6),
+        'taxonomy_path': list(row.get('taxonomy_path') or []),
         'sources': sources,
         'nearest_samples': [
             {

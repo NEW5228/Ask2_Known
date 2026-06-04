@@ -9,7 +9,7 @@ from ask2know.features.feature_config import (
 )
 from ask2know.utils.io_utils import save_json
 
-VERSION = '0.4.63.1'
+VERSION = '0.5.0'
 
 
 def prompt_templates_for_preset(feature_preset):
@@ -202,7 +202,10 @@ confidence:
   saturation_ratio_threshold: 0.65
 
 question:
-  max_questions_per_sample: 1
+  max_questions_per_sample: 2
+  enable_taxonomy_ask: true
+  ask_candidate_top_k: 10
+  max_taxonomy_options: 8
   enable_question_reward: true
 
 sample_pool:
@@ -326,6 +329,12 @@ def create_task_project(name, classes, output='.', feature_preset='auto', featur
 ```
 
 待学习未知样本放入：
+
+```text
+{dataset_dir / 'unlabeled'}
+```
+
+临时分析图片会保存到：
 
 ```text
 {dataset_dir / 'unknown'}

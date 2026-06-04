@@ -1109,6 +1109,126 @@ def sign_symbol_feature(img, mask):
     ], dtype=np.float32)
 
 
+def traffic_template_feature(img, mask):
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    x, y, w, h = 0, 0, gray.shape[1], gray.shape[0]
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if contours:
+        x, y, w, h = cv2.boundingRect(max(contours, key=cv2.contourArea))
+        pad_x = int(w * 0.12)
+        pad_y = int(h * 0.12)
+        x = max(0, x - pad_x)
+        y = max(0, y - pad_y)
+        w = min(gray.shape[1] - x, w + 2 * pad_x)
+        h = min(gray.shape[0] - y, h + 2 * pad_y)
+    crop = gray[y:y + h, x:x + w]
+    if crop.size == 0:
+        crop = gray
+    crop = cv2.resize(crop, (32, 32), interpolation=cv2.INTER_AREA)
+    crop = cv2.equalizeHist(crop)
+    crop = crop.astype(np.float32) / 255.0
+
+    edges = cv2.Canny((crop * 255).astype(np.uint8), 50, 150)
+    edges = cv2.resize(edges, (24, 24), interpolation=cv2.INTER_AREA).astype(np.float32) / 255.0
+    small = cv2.resize(crop, (16, 16), interpolation=cv2.INTER_AREA).astype(np.float32)
+    center = crop[6:26, 6:26]
+    center = cv2.resize(center, (16, 16), interpolation=cv2.INTER_AREA).astype(np.float32)
+    return np.concatenate([small.flatten(), center.flatten(), edges.flatten()]).astype(np.float32)
+
+
+def traffic_field_feature(img, mask):
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    h, w = gray.shape[:2]
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    inner = np.zeros_like(mask)
+    if contours:
+        x, y, bw, bh = cv2.boundingRect(max(contours, key=cv2.contourArea))
+        mx = int(bw * 0.18)
+        my = int(bh * 0.18)
+        x1 = max(0, x + mx)
+        y1 = max(0, y + my)
+        x2 = min(w, x + bw - mx)
+        y2 = min(h, y + bh - my)
+        if x2 > x1 and y2 > y1:
+            inner[y1:y2, x1:x2] = 255
+    if cv2.countNonZero(inner) <= 0:
+        inner = mask.copy()
+
+    pixels = hsv[mask > 0]
+    if pixels.size == 0:
+        return np.zeros(314, dtype=np.float32)
+    hue = pixels[:, 0]
+    sat = pixels[:, 1]
+    val = pixels[:, 2]
+    blue_ratio = ((hue >= 85) & (hue < 125) & (sat > 70) & (val > 50)).sum() / max(1, pixels.shape[0])
+
+    dark = ((gray < 135) & (inner > 0)).astype(np.uint8) * 255
+    white = ((hsv[:, :, 1] < 75) & (hsv[:, :, 2] > 150) & (inner > 0)).astype(np.uint8) * 255
+    symbol = white if blue_ratio > 0.20 and cv2.countNonZero(white) > cv2.countNonZero(dark) * 0.55 else dark
+    if cv2.countNonZero(symbol) < 8:
+        edges = cv2.Canny(gray, 50, 150)
+        symbol = cv2.bitwise_and(edges, edges, mask=inner)
+    kernel = np.ones((2, 2), np.uint8)
+    symbol = cv2.morphologyEx(symbol, cv2.MORPH_OPEN, kernel)
+
+    ys, xs = np.where(symbol > 0)
+    if xs.size:
+        x0, x1 = int(xs.min()), int(xs.max()) + 1
+        y0, y1 = int(ys.min()), int(ys.max()) + 1
+        crop = symbol[y0:y1, x0:x1]
+        cx = float(xs.mean()) / max(1.0, float(w - 1))
+        cy = float(ys.mean()) / max(1.0, float(h - 1))
+        spread_x = min(float(xs.std()) / max(1.0, float(w) * 0.22), 1.0)
+        spread_y = min(float(ys.std()) / max(1.0, float(h) * 0.22), 1.0)
+        area_ratio = min(float(xs.size) / max(1.0, float(cv2.countNonZero(inner))), 1.0)
+    else:
+        crop = symbol
+        cx = cy = spread_x = spread_y = area_ratio = 0.0
+
+    if crop.size == 0:
+        crop = symbol
+    small = cv2.resize(crop, (16, 16), interpolation=cv2.INTER_AREA).astype(np.float32) / 255.0
+    proj_x = small.sum(axis=0)
+    proj_y = small.sum(axis=1)
+    proj_x = proj_x / max(1e-6, float(proj_x.max()))
+    proj_y = proj_y / max(1e-6, float(proj_y.max()))
+
+    edges = cv2.Canny(crop, 40, 140) if crop.size else np.zeros((1, 1), dtype=np.uint8)
+    gx = cv2.Sobel(crop.astype(np.float32), cv2.CV_32F, 1, 0, ksize=3) if crop.size else np.zeros_like(edges, dtype=np.float32)
+    gy = cv2.Sobel(crop.astype(np.float32), cv2.CV_32F, 0, 1, ksize=3) if crop.size else np.zeros_like(edges, dtype=np.float32)
+    mag = np.sqrt(gx * gx + gy * gy)
+    ang = (np.degrees(np.arctan2(gy, gx)) + 180.0) % 180.0
+    bins = np.zeros(8, dtype=np.float32)
+    if np.any(edges > 0):
+        edge_mag = mag[edges > 0]
+        edge_ang = ang[edges > 0]
+        hist, _ = np.histogram(edge_ang, bins=8, range=(0.0, 180.0), weights=edge_mag)
+        bins = hist.astype(np.float32)
+        bins = bins / max(1e-6, float(bins.sum()))
+
+    left_mass = float(small[:, :8].sum())
+    right_mass = float(small[:, 8:].sum())
+    top_mass = float(small[:8, :].sum())
+    bottom_mass = float(small[8:, :].sum())
+    total_mass = max(1e-6, float(small.sum()))
+    directional = np.array([
+        left_mass / total_mass,
+        right_mass / total_mass,
+        top_mass / total_mass,
+        bottom_mass / total_mass,
+        (right_mass - left_mass) / total_mass * 0.5 + 0.5,
+        (bottom_mass - top_mass) / total_mass * 0.5 + 0.5,
+        cx,
+        cy,
+        spread_x,
+        spread_y,
+        area_ratio,
+        min(blue_ratio * 3.0, 1.0),
+    ], dtype=np.float32)
+    return np.concatenate([small.flatten(), proj_x, proj_y, bins, directional]).astype(np.float32)
+
+
 def extract_features_from_image(img):
     img = cv2.resize(img, (256, 256))
     mask = _main_mask(img)
@@ -1132,6 +1252,8 @@ def extract_features_from_image(img):
         'car_part': car_part_feature(img, mask),
         'text_mark': text_mark_feature(img, mask),
         'sign_symbol': sign_symbol_feature(img, mask),
+        'traffic_template': traffic_template_feature(img, mask),
+        'traffic_field': traffic_field_feature(img, mask),
     }
 
 
