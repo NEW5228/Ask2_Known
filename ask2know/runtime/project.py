@@ -204,8 +204,10 @@ confidence:
 question:
   max_questions_per_sample: 2
   enable_taxonomy_ask: true
+  enable_dynamic_ask: true
   ask_candidate_top_k: 10
   max_taxonomy_options: 8
+  max_dynamic_options: 8
   enable_question_reward: true
 
 sample_pool:
@@ -328,16 +330,16 @@ def create_task_project(name, classes, output='.', feature_preset='auto', featur
 {dataset_dir / 'train'}
 ```
 
-待学习未知样本放入：
-
-```text
-{dataset_dir / 'unlabeled'}
-```
-
-临时分析图片会保存到：
+用于命令行交互学习的未知样本放入：
 
 ```text
 {dataset_dir / 'unknown'}
+```
+
+带真实标签的评估样本放入：
+
+```text
+{dataset_dir / 'unlabeled' / '<class_name>'}
 ```
 
 ''', encoding='utf-8')

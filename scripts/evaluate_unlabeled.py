@@ -148,7 +148,8 @@ def main():
     parser.add_argument('--visual-rule-min-concept-gap', type=float, default=0.10, help='Minimum class concept gap required to learn a visual rule.')
     parser.add_argument('--visual-rule-min-match-gap', type=float, default=0.04, help='Minimum sample-to-class match gap required to apply a visual rule.')
     parser.add_argument('--visual-rule-allow-rank-flip', action='store_true', help='Allow visual rules to change the top-1 prediction.')
-    parser.add_argument('--simulate-ask-resolution', action='store_true', help='Simulate taxonomy questions using the true label as an oracle answer.')
+    parser.add_argument('--simulate-ask-resolution', action='store_true', help='Simulate ASK questions using the true label as an oracle answer.')
+    parser.add_argument('--simulate-ask-mode', choices=['taxonomy', 'dynamic', 'auto'], default='taxonomy', help='ASK simulation mode. auto tries taxonomy first, then dynamic candidate questions.')
     parser.add_argument('--simulate-ask-questions', type=int, default=DEFAULT_ASK_MAX_QUESTIONS, help='Maximum simulated taxonomy questions per sample.')
     parser.add_argument('--simulate-ask-options', type=int, default=DEFAULT_ASK_MAX_OPTIONS, help='Maximum options per simulated taxonomy question.')
     parser.add_argument('--simulate-ask-candidate-top-k', type=int, default=DEFAULT_ASK_CANDIDATE_TOP_K, help='Maximum candidates used by simulated ASK resolution.')
@@ -482,6 +483,7 @@ def main():
                 max_questions=args.simulate_ask_questions,
                 max_options=args.simulate_ask_options,
                 candidate_top_k=args.simulate_ask_candidate_top_k,
+                question_mode=args.simulate_ask_mode,
             )
             if args.simulate_ask_resolution else None
         ),

@@ -23,7 +23,9 @@ from ask2know.questions.ask_resolver import (
     DEFAULT_ASK_CANDIDATE_TOP_K,
     DEFAULT_ASK_MAX_OPTIONS,
     DEFAULT_ASK_MAX_QUESTIONS,
+    apply_dynamic_answer_to_predictions,
     apply_taxonomy_answer_to_predictions,
+    build_runtime_dynamic_question,
     build_runtime_taxonomy_question,
 )
 from ask2know.questions.question_selector import QuestionSelector
@@ -233,6 +235,14 @@ class LearningSession:
             candidate_top_k=question_cfg.get('ask_candidate_top_k', DEFAULT_ASK_CANDIDATE_TOP_K),
         )
 
+    def _build_dynamic_question(self, results):
+        question_cfg = self.cfg.get('question', {}) if self.cfg else {}
+        return build_runtime_dynamic_question(
+            results,
+            max_options=question_cfg.get('max_dynamic_options', question_cfg.get('max_taxonomy_options', DEFAULT_ASK_MAX_OPTIONS)),
+            candidate_top_k=question_cfg.get('ask_candidate_top_k', DEFAULT_ASK_CANDIDATE_TOP_K),
+        )
+
     def _predict_current(self):
         sample_path = self.current_sample['path']
         self.current_results = self.model.predict(sample_path, self.aw.export())
@@ -254,6 +264,21 @@ class LearningSession:
             if self.cfg.get('question', {}).get('enable_taxonomy_ask', True) and taxonomy_question:
                 self.pending_question = taxonomy_question
                 self.pending_generated = taxonomy_generated
+            elif self.cfg.get('question', {}).get('enable_dynamic_ask', True):
+                dynamic_question, dynamic_generated = self._build_dynamic_question(self.current_results)
+                if dynamic_question:
+                    self.pending_question = dynamic_question
+                    self.pending_generated = dynamic_generated
+                else:
+                    self.pending_question = self.q_selector.select(self.current_results[0], self.current_results[1], weights=weights)
+                    self.pending_generated = generate_natural_question(
+                        self.current_results[0],
+                        self.current_results[1],
+                        self.pending_question,
+                        weights,
+                        sample_path,
+                        pairwise_manager=self.pairwise,
+                    )
             else:
                 self.pending_question = self.q_selector.select(self.current_results[0], self.current_results[1], weights=weights)
                 self.pending_generated = generate_natural_question(
@@ -334,6 +359,17 @@ class LearningSession:
             self.current_results = matched
             self.question_turns += 1
             feedback_kind = 'taxonomy_resolution'
+        elif answered_question.get('kind') == 'dynamic_disambiguation' or action.get('kind') == 'dynamic_disambiguation':
+            reranked, matched = apply_dynamic_answer_to_predictions(
+                self.current_results,
+                action.get('labels') or [],
+                score_bonus=action.get('score_bonus', 1.0),
+            )
+            if not matched:
+                raise ValueError('当前候选中没有匹配这个动态选项的类别。')
+            self.current_results = reranked
+            self.question_turns += 1
+            feedback_kind = 'dynamic_disambiguation'
         else:
             answer_text, before, after = apply_answer_to_weights(
                 self.aw,

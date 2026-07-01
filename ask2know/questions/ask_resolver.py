@@ -3,6 +3,7 @@ from collections import Counter
 DEFAULT_ASK_CANDIDATE_TOP_K = 10
 DEFAULT_ASK_MAX_OPTIONS = 8
 DEFAULT_ASK_MAX_QUESTIONS = 2
+DEFAULT_DYNAMIC_SCORE_BONUS = 1.0
 
 
 def _path(prediction):
@@ -142,6 +143,145 @@ def build_runtime_taxonomy_question(
     return pending_question, generated
 
 
+def _display_label(label):
+    return str(label or '').replace('_', ' ')
+
+
+def _best_source_hint(prediction):
+    sources = [
+        ('nearest samples', prediction.get('knn_score')),
+        ('prototype memory', prediction.get('prototype_score')),
+        ('local crop evidence', prediction.get('crop_rerank_score')),
+        ('pairwise experience', prediction.get('pairwise_score')),
+        ('text semantics', prediction.get('text_semantic_score')),
+        ('concept evidence', prediction.get('concept_score')),
+        ('subprototype memory', prediction.get('subprototype_score')),
+    ]
+    scored = [
+        (name, float(value))
+        for name, value in sources
+        if value is not None
+    ]
+    if not scored:
+        return 'overall visual similarity'
+    name, value = max(scored, key=lambda item: item[1])
+    return f'{name} {value:.3f}'
+
+
+def suggest_dynamic_question(
+    predictions,
+    *,
+    max_options=DEFAULT_ASK_MAX_OPTIONS,
+    min_options=2,
+    candidate_top_k=None,
+):
+    """Build a candidate-specific question without requiring a predefined taxonomy."""
+    if candidate_top_k is not None:
+        predictions = select_ask_candidates(predictions, candidate_top_k=candidate_top_k)
+    preds = [item for item in (predictions or []) if item.get('label')]
+    if len(preds) < min_options:
+        return None
+    labels_seen = set()
+    options = []
+    for item in preds:
+        label = str(item.get('label'))
+        if label in labels_seen:
+            continue
+        labels_seen.add(label)
+        if len(options) >= max(1, int(max_options)):
+            break
+        score = float(item.get('score', 0.0))
+        options.append({
+            'node': label,
+            'labels': [label],
+            'best_score': score,
+            'hint': _best_source_hint(item),
+        })
+    if len(options) < min_options:
+        return None
+    top = preds[0]
+    runner_up = preds[1] if len(preds) > 1 else {}
+    margin = float(top.get('score', 0.0)) - float(runner_up.get('score', 0.0))
+    return {
+        'type': 'dynamic_disambiguation',
+        'question': '请选择当前图片最接近哪一种候选外观。',
+        'options': options,
+        'selection_score': max(0.0, 1.0 - margin),
+        'score_margin': margin,
+    }
+
+
+def build_runtime_dynamic_question(
+    predictions,
+    *,
+    max_options=DEFAULT_ASK_MAX_OPTIONS,
+    candidate_top_k=DEFAULT_ASK_CANDIDATE_TOP_K,
+):
+    candidates = select_ask_candidates(predictions, candidate_top_k=candidate_top_k)
+    question = suggest_dynamic_question(candidates, max_options=max_options)
+    if not question:
+        return None, None
+    keys = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+    options = []
+    for idx, option in enumerate(question.get('options') or []):
+        if idx >= len(keys) - 1:
+            break
+        labels = [str(label) for label in option.get('labels', []) if label]
+        if not labels:
+            continue
+        label = labels[0]
+        text = f'更像 {_display_label(label)}（依据：{option.get("hint", "visual similarity")}）'
+        options.append((
+            keys[idx],
+            text,
+            {
+                'kind': 'dynamic_disambiguation',
+                'labels': labels,
+                'score_bonus': DEFAULT_DYNAMIC_SCORE_BONUS,
+            },
+        ))
+    unknown_key = keys[len(options)] if len(options) < len(keys) else 'Z'
+    options.append((
+        unknown_key,
+        '不确定，保留当前排序',
+        {
+            'kind': 'dynamic_disambiguation',
+            'labels': [],
+            'score_bonus': 0.0,
+            'no_change': True,
+        },
+    ))
+    if len(options) < 3:
+        return None, None
+    pending_question = {
+        'id': 'ASK_DYNAMIC_CANDIDATE',
+        'kind': 'dynamic_disambiguation',
+        'feature': 'dynamic_candidate',
+        'options': options,
+        '_selection': {
+            'feature': 'dynamic_candidate',
+            'score': question.get('selection_score', 0.0),
+            'score_margin': question.get('score_margin', 0.0),
+        },
+    }
+    generated = {
+        'question': (
+            '我会根据当前图片和候选类别动态追问。'
+            '请选择最接近这张图的候选外观；如果看不出来就选“不确定”。'
+        ),
+        'context': '',
+        'evidence': (
+            '当前没有可用的固定分层问题。'
+            '系统改为围绕本次 top-k 候选生成候选级区分问题，回答后只调整本次候选排序。'
+        ),
+        'concept_evidence': '',
+        'selected_feature': pending_question['feature'],
+        'selected_reason': '候选分数接近，且没有 taxonomy 问题可用。',
+        'selection_debug': pending_question['_selection'],
+    }
+    return pending_question, generated
+
+
 def apply_taxonomy_answer_to_predictions(predictions, path_prefix):
     prefix = tuple(str(item) for item in (path_prefix or []))
     if not prefix:
@@ -161,6 +301,33 @@ def apply_taxonomy_answer_to_predictions(predictions, path_prefix):
             copied['ask_resolution_gate_reason'] = 'outside_selected_taxonomy_branch'
             unmatched.append(copied)
     return matched + unmatched, matched
+
+
+def apply_dynamic_answer_to_predictions(predictions, labels, *, score_bonus=DEFAULT_DYNAMIC_SCORE_BONUS):
+    selected_labels = {str(label) for label in (labels or []) if label}
+    if not selected_labels:
+        copied = []
+        for item in predictions or []:
+            row = dict(item)
+            row['ask_resolution_delta'] = 0.0
+            row['ask_resolution_gate_reason'] = 'dynamic_no_change'
+            copied.append(row)
+        return copied, copied
+    matched = []
+    unmatched = []
+    for item in predictions or []:
+        row = dict(item)
+        if str(row.get('label')) in selected_labels:
+            row['ask_resolution_delta'] = float(score_bonus)
+            row['ask_resolution_gate_reason'] = 'selected_dynamic_candidate'
+            row['score'] = float(row.get('score', 0.0)) + float(score_bonus)
+            matched.append(row)
+        else:
+            row['ask_resolution_delta'] = 0.0
+            row['ask_resolution_gate_reason'] = 'outside_dynamic_candidate'
+            unmatched.append(row)
+    reranked = sorted(matched + unmatched, key=lambda item: float(item.get('score', 0.0)), reverse=True)
+    return reranked, matched
 
 
 def simulate_taxonomy_answer(predictions, true_label, question):
@@ -278,6 +445,85 @@ def simulate_taxonomy_dialog(
     }
 
 
+def simulate_dynamic_dialog(
+    predictions,
+    true_label,
+    *,
+    max_questions=DEFAULT_ASK_MAX_QUESTIONS,
+    max_options=DEFAULT_ASK_MAX_OPTIONS,
+    candidate_top_k=DEFAULT_ASK_CANDIDATE_TOP_K,
+):
+    preds = select_ask_candidates(predictions, candidate_top_k=candidate_top_k)
+    raw_label = preds[0].get('label') if preds else None
+    if raw_label == true_label:
+        return {
+            'asked': 0,
+            'resolved_label': raw_label,
+            'correct': True,
+            'reason': 'already_correct',
+            'steps': [],
+            'remaining_labels': [item.get('label') for item in preds],
+        }
+    current = preds
+    steps = []
+    asked = 0
+    for _ in range(max(1, int(max_questions))):
+        question = suggest_dynamic_question(
+            current,
+            max_options=max_options,
+            candidate_top_k=candidate_top_k,
+        )
+        if not question:
+            break
+        asked += 1
+        options = question.get('options') or []
+        selected = next(
+            (item for item in options if true_label in set(item.get('labels') or [])),
+            None,
+        )
+        steps.append({
+            'level_index': 'dynamic',
+            'options': [
+                {'node': item.get('node'), 'labels': item.get('labels', [])}
+                for item in options
+            ],
+            'answer_prefix': None,
+            'answer_labels': selected.get('labels') if selected else [],
+            'reason': 'answered' if selected else 'true_label_not_in_options',
+            'resolved_label': (selected.get('labels') or [raw_label])[0] if selected else raw_label,
+            'remaining_labels': selected.get('labels') if selected else [item.get('label') for item in current],
+        })
+        if selected is None:
+            return {
+                'asked': asked,
+                'resolved_label': raw_label,
+                'correct': False,
+                'reason': 'true_label_not_in_options',
+                'steps': steps,
+                'remaining_labels': [item.get('label') for item in current],
+            }
+        labels = set(selected.get('labels') or [])
+        current = [item for item in current if item.get('label') in labels]
+        resolved = current[0].get('label') if current else (selected.get('labels') or [raw_label])[0]
+        return {
+            'asked': asked,
+            'resolved_label': resolved,
+            'correct': resolved == true_label,
+            'reason': 'answered',
+            'steps': steps,
+            'remaining_labels': [item.get('label') for item in current],
+        }
+    resolved = current[0].get('label') if current else raw_label
+    return {
+        'asked': asked,
+        'resolved_label': resolved,
+        'correct': resolved == true_label,
+        'reason': 'answered' if asked else 'no_question',
+        'steps': steps,
+        'remaining_labels': [item.get('label') for item in current],
+    }
+
+
 def summarize_ask_resolution(
     samples,
     *,
@@ -285,6 +531,7 @@ def summarize_ask_resolution(
     max_questions=DEFAULT_ASK_MAX_QUESTIONS,
     max_options=DEFAULT_ASK_MAX_OPTIONS,
     candidate_top_k=DEFAULT_ASK_CANDIDATE_TOP_K,
+    question_mode='taxonomy',
 ):
     total = len(samples or [])
     raw_correct = 0
@@ -310,13 +557,38 @@ def summarize_ask_resolution(
         in_candidates = true_label in candidate_labels
         topk_contains_true += 1 if in_topk else 0
         candidate_contains_true += 1 if in_candidates else 0
-        result = simulate_taxonomy_dialog(
-            preds,
-            true_label,
-            max_questions=max_questions,
-            max_options=max_options,
-            candidate_top_k=candidate_top_k,
-        )
+        if question_mode == 'dynamic':
+            result = simulate_dynamic_dialog(
+                preds,
+                true_label,
+                max_questions=max_questions,
+                max_options=max_options,
+                candidate_top_k=candidate_top_k,
+            )
+        elif question_mode == 'auto':
+            result = simulate_taxonomy_dialog(
+                preds,
+                true_label,
+                max_questions=max_questions,
+                max_options=max_options,
+                candidate_top_k=candidate_top_k,
+            )
+            if result.get('reason') == 'no_question':
+                result = simulate_dynamic_dialog(
+                    preds,
+                    true_label,
+                    max_questions=max_questions,
+                    max_options=max_options,
+                    candidate_top_k=candidate_top_k,
+                )
+        else:
+            result = simulate_taxonomy_dialog(
+                preds,
+                true_label,
+                max_questions=max_questions,
+                max_options=max_options,
+                candidate_top_k=candidate_top_k,
+            )
         asked += int(result.get('asked') or 0)
         for step in result.get('steps') or []:
             level_counts[step.get('level_index')] += 1
@@ -348,6 +620,7 @@ def summarize_ask_resolution(
         'ask_candidate_top_k': int(candidate_top_k),
         'max_questions': int(max_questions),
         'max_options': int(max_options),
+        'question_mode': question_mode,
         'top_k_contains_true_count': topk_contains_true,
         'top_k_contains_true_accuracy': topk_contains_true / max(1, total),
         'candidate_contains_true_count': candidate_contains_true,

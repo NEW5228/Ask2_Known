@@ -216,8 +216,10 @@ confidence:
 question:
   max_questions_per_sample: 2
   enable_taxonomy_ask: true
+  enable_dynamic_ask: true
   ask_candidate_top_k: 10
   max_taxonomy_options: 8
+  max_dynamic_options: 8
   enable_question_reward: true
 
 sample_pool:
@@ -259,7 +261,7 @@ def main():
     parser.add_argument('--name', required=True, help='任务名，例如 fruit_task 或 vehicle_brand_demo')
     parser.add_argument('--classes', nargs='+', required=True, help='类别名，例如 apple banana pear 或 bmw audi benz')
     parser.add_argument('--output', default='.', help='任务输出根目录，例如 D:\\a2k_test。默认当前目录')
-    parser.add_argument('--feature-preset', choices=['auto', 'general', 'fruit', 'pet', 'car', 'traffic_sign'], default='auto', help='特征预设。auto 会根据类别名判断是否使用 fruit、pet、car 或 traffic_sign。')
+    parser.add_argument('--feature-preset', choices=['auto', 'general', 'fruit', 'pet', 'car', 'traffic_sign', 'texture'], default='auto', help='特征预设。auto 会根据类别名判断是否使用 fruit、pet、car、traffic_sign 或 texture。')
     parser.add_argument('--features', nargs='+', choices=list(USER_FEATURE_GROUPS), default=None, help='用户可选特征大类。quality 是系统质量检查，不在这里选择。')
     args = parser.parse_args()
 
@@ -328,7 +330,7 @@ def main():
     )
 
     readme = project_root / 'README_task.md'
-    readme.write_text(f'''# {task_name}\n\n这个任务由 Ask2Know v{VERSION} 自动创建。\n\n## 放图片\n\n已确认训练样本放入：\n\n```text\n{dataset_dir / 'train'}\n```\n\n待学习未标注样本放入：\n\n```text\n{dataset_dir / 'unlabeled'}\n```\n\n临时分析图片会保存到：\n\n```text\n{dataset_dir / 'unknown'}\n```\n\n## 运行\n\n在 Ask2Know 框架目录执行：\n\n```bat\npython run_demo.py --config {config_path}\n```\n\nv{VERSION} 默认不弹图，避免 Windows 图片查看器占用文件。需要预览时：\n\n```bat\npython run_demo.py --config {config_path} --preview\n```\n''', encoding='utf-8')
+    readme.write_text(f'''# {task_name}\n\n这个任务由 Ask2Know v{VERSION} 自动创建。\n\n## 放图片\n\n已确认训练样本放入：\n\n```text\n{dataset_dir / 'train'}\n```\n\n用于命令行交互学习的未知样本放入：\n\n```text\n{dataset_dir / 'unknown'}\n```\n\n带真实标签的评估样本放入：\n\n```text\n{dataset_dir / 'unlabeled' / '<class_name>'}\n```\n\n## 运行\n\n在 Ask2Know 框架目录执行：\n\n```bat\npython run_demo.py --config {config_path}\n```\n\nv{VERSION} 默认不弹图，避免 Windows 图片查看器占用文件。需要预览时：\n\n```bat\npython run_demo.py --config {config_path} --preview\n```\n''', encoding='utf-8')
 
     print('Ask2Know task created.')
     print('Project:', project_root)
@@ -340,8 +342,10 @@ def main():
     print('1. Put known samples into:')
     for cls in args.classes:
         print(f'   {dataset_dir / "train" / cls}')
-    print('2. Put unlabeled learning samples into:')
-    print(f'   {dataset_dir / "unlabeled"}')
+    print('2. Put unknown learning samples into:')
+    print(f'   {dataset_dir / "unknown"}')
+    print('   Put labeled evaluation samples into:')
+    print(f'   {dataset_dir / "unlabeled" / "<class_name>"}')
     print('3. Run from the a2k framework folder:')
     print(f'   python run_demo.py --config {config_path}')
 

@@ -101,6 +101,16 @@ PRESET_FEATURES = {
         'text': ['text_mark'],
         'sign': ['sign_symbol'],
     },
+    'texture': {
+        'color': ['color'],
+        'shape': ['contour'],
+        'texture': ['texture'],
+        'surface': ['surface_mark'],
+        'part': ['fruit_part'],
+        'size': ['size'],
+        'text': ['text_mark'],
+        'sign': ['sign_symbol'],
+    },
 }
 
 DEFAULT_GROUP_WEIGHTS = {
@@ -121,6 +131,7 @@ PRESET_DEFAULT_GROUPS = {
     'pet': ('color', 'shape', 'texture', 'surface', 'part', 'size'),
     'car': ('color', 'shape', 'texture', 'surface', 'part', 'size', 'text', 'sign'),
     'traffic_sign': ('color', 'shape', 'text', 'sign'),
+    'texture': ('color', 'shape', 'texture', 'surface', 'part'),
 }
 
 
@@ -140,7 +151,7 @@ def resolve_feature_preset(preset, classes=None):
     if preset == 'auto':
         return infer_feature_preset(classes)
     if preset not in PRESET_FEATURES:
-        raise ValueError(f'Unsupported feature preset: {preset}. Use auto, general, fruit, pet, car, or traffic_sign.')
+        raise ValueError(f'Unsupported feature preset: {preset}. Use auto, general, fruit, pet, car, traffic_sign, or texture.')
     return preset
 
 

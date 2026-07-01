@@ -12,7 +12,7 @@ Ask2Know 是一个面向低样本图像识别任务的本地交互式学习系�
 - 交通指示牌支持：提供交通标志数据准备脚本，支持生成训练集、`unlabeled` 评估集和语义元数据，用于验证多层识别效果。
 - 预缓存：支持提前缓存图片、裁剪图和文本标签 embedding，减少评估和交互时的重复计算。
 - 桌面端流程重构：启动页分为创建项目和加载项目；工作台包含项目管理、添加数据集、创建训练集、训练模型、评估模型、分析图片、模型导出。
-- 数据目录规范：未标注评估数据使用 `datasets/unlabeled/`，用户临时分析图片使用 `datasets/unknown/`。
+- 数据目录规范：带真实标签的评估数据使用 `datasets/unlabeled/<class>/`，待交互学习或临时分析的图片使用 `datasets/unknown/`。
 - 导出约束调整：需要先完成评估模型流程，之后才能导出模型；分析图片不影响导出。
 
 ## 核心能力
@@ -102,6 +102,7 @@ python scripts\init_task.py --name pet_task --classes cat dog --output D:\a2k_te
 - `pet`
 - `car`
 - `traffic_sign`
+- `texture`
 
 用户可见特征：
 
@@ -123,7 +124,7 @@ python scripts\init_task.py --name pet_task --classes cat dog --output D:\a2k_te
 ```text
 datasets/train/<class>/       已确认训练样本
 datasets/unlabeled/<class>/   带真实标签的评估样本
-datasets/unknown/             用户添加的待分析图片
+datasets/unknown/             用户添加的待交互学习或待分析图片
 outputs/                      运行报告和模型缓存
 metadata/                     经验数据和项目元数据
 sample_pools/                 candidate、rejected 等样本池
@@ -182,6 +183,13 @@ python scripts\evaluate_unlabeled.py --config D:\a2k_test\<task_name>\configs\ta
 ```bat
 python scripts\evaluate_unlabeled.py --config D:\a2k_test\<task_name>\configs\task_config.yaml --simulate-ask-resolution --simulate-ask-questions 2 --simulate-ask-candidate-top-k 10 --simulate-ask-options 8
 ```
+选择 ASK 模拟模式：
+
+```bat
+python scripts\evaluate_unlabeled.py --config D:\a2k_test\<task_name>\configs\task_config.yaml --simulate-ask-resolution --simulate-ask-mode auto
+```
+
+`taxonomy` 只使用固定分层问题；`dynamic` 只使用候选级动态追问；`auto` 会优先使用 taxonomy，无法生成分层问题时再使用动态候选追问。
 
 启用预缓存：
 

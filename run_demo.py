@@ -11,7 +11,9 @@ from ask2know.inference.uncertainty import is_globally_uncertain, top_gap, score
 from ask2know.questions.ask_resolver import (
     DEFAULT_ASK_CANDIDATE_TOP_K,
     DEFAULT_ASK_MAX_OPTIONS,
+    apply_dynamic_answer_to_predictions,
     apply_taxonomy_answer_to_predictions,
+    build_runtime_dynamic_question,
     build_runtime_taxonomy_question,
 )
 from ask2know.questions.question_selector import QuestionSelector
@@ -757,6 +759,18 @@ def main():
         if cfg.get('question', {}).get('enable_taxonomy_ask', True) and taxonomy_q:
             q = taxonomy_q
             generated = taxonomy_generated
+        elif cfg.get('question', {}).get('enable_dynamic_ask', True):
+            dynamic_q, dynamic_generated = build_runtime_dynamic_question(
+                results,
+                max_options=cfg.get('question', {}).get('max_dynamic_options', cfg.get('question', {}).get('max_taxonomy_options', DEFAULT_ASK_MAX_OPTIONS)),
+                candidate_top_k=cfg.get('question', {}).get('ask_candidate_top_k', DEFAULT_ASK_CANDIDATE_TOP_K),
+            )
+            if dynamic_q:
+                q = dynamic_q
+                generated = dynamic_generated
+            else:
+                q = q_selector.select(results[0], results[1], weights=summarize_group_weights(aw.export(), feature_spec))
+                generated = generate_natural_question(results[0], results[1], q, summarize_group_weights(aw.export(), feature_spec), sample_path, pairwise_manager=pairwise)
         else:
             q = q_selector.select(results[0], results[1], weights=summarize_group_weights(aw.export(), feature_spec))
             generated = generate_natural_question(results[0], results[1], q, summarize_group_weights(aw.export(), feature_spec), sample_path, pairwise_manager=pairwise)
@@ -832,6 +846,17 @@ def main():
                 ans = next_ans
                 new_results = matched
                 question_turns += 1
+        elif q.get('kind') == 'dynamic_disambiguation' or action.get('kind') == 'dynamic_disambiguation':
+            new_results, matched = apply_dynamic_answer_to_predictions(
+                results,
+                action.get('labels') or [],
+                score_bonus=action.get('score_bonus', 1.0),
+            )
+            if not matched:
+                print('当前候选中没有匹配这个动态选项的类别，跳过本次问题更新。')
+                logs.append({'sample': sample_path, 'before': results, 'asked': True, 'question': q['id'], 'answer': ans, 'valid_answer': False})
+                continue
+            question_kind = 'dynamic_disambiguation'
         else:
             answer_text, before, after = apply_answer_to_weights(
                 aw,
@@ -849,6 +874,8 @@ def main():
         print('\n用户回答:', answer_text.format(a=results[0]['label'], b=results[1]['label']))
         if question_kind == 'taxonomy_resolution':
             print('已按用户选择的分层属性过滤候选。')
+        elif question_kind == 'dynamic_disambiguation':
+            print('已按用户选择的动态候选外观调整排序。')
         else:
             print('权重更新前:', pretty_group_weights(before, feature_spec))
             print('权重更新后:', pretty_group_weights(after, feature_spec))
